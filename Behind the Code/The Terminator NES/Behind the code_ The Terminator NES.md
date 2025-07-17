@@ -10,11 +10,29 @@ Why would the Terminator be reviewing unassembled code while chasing Sarah Conno
 
 ## **Why is the maximum number of lives in game 6?**
 
-We’ll start with a quirk regarding spare lives. You receive an extra life for scoring 50,000 points, however you are limited to a maximum of 6. Was this by design? Terminator doesn’t store the lives remaining as a number in RAM. It stores the Tile ID for the graphics representing that number. So if you have 2 lives left, RAM holds a value of $1B - this tile here. The numbers 7, 8, and 9 begin here - at a value of $20 hex - represented on the next row. There is code that limits the extra lives not to the number 6, of course, but to a tile value of $1F.
+We’ll start with a quirk regarding spare lives. You receive an extra life for scoring 50,000 points, however you are limited to a maximum of 6. Was this by design? Terminator doesn’t store the lives remaining as a number in RAM. It stores the Tile ID for the graphics representing that number. So if you have 2 lives left, RAM holds a value of $1B - this tile here. The numbers 7, 8, and 9 begin here - at a value of $20 hex - represented on the next row.
 
-![image2](images\image2.png)
+![PpuChrViewerPartial1](images\PpuChrViewerPartial1.png)
 
-This is speculation on my part, but I think perhaps all of these numbers used to be in the range of $10 to $1F. That would have put 9 at $1F. If that’s the case, limiting the number of lives remaining to $1F would make sense. Graphics changes were likely made, and this value was never updated. $1F was no longer the tile ID For 9 but rather the tile ID for 6. So… Here is a Game Genie code to increase maximum lives in reserve to 9 - Tile ID $22 hex. !
+There is code that limits the extra lives not to the number 6, of course, but to a tile value of $1F.
+
+```asm
+LDA Player_Lives_as_Sprite_ID
+CMP #$1F ; Cap Lives Remaining at 6
+BCS $B6C2 
+INC Player_Lives_as_Sprite_ID ; Increment Remaining Lives 
+```
+
+This is speculation on my part, but I think perhaps all of these numbers used to be in the range of $10 to $1F. That would have put 9 at $1F. If that’s the case, limiting the number of lives remaining to $1F would make sense. Graphics changes were likely made, and this value was never updated. $1F was no longer the tile ID For 9 but rather the tile ID for 6. So… Here is a Game Genie code to increase maximum lives in reserve to 9 - Tile ID $22 hex.
+`ZXUL PVYP` that change the tile ID for 9 to $22 hex.
+
+```asm
+CMP #$1F ; Cap Lives Remaining at 6
+↓
+CMP #$22 ; Cap Lives Remaining at 9
+```
+
+## **Why is platforming in this game so difficult?**
 
 ![image3](images\image3.png)
 
@@ -40,7 +58,7 @@ These states require a few frames of animation before moving to the next state -
 
 Now as for why platforming is so difficult in The Terminator, I know of at least three reasons.
 
-The first is the standing jump versus the running jump. This may seem minor - once you know a running jump starts immediately, just make sure you always press left or right before you jump. This could be a good approach to starting a jump from a standstill, but what if you want to bunnyhop up several platforms like those found in the very first screen of the game? Landing not only starts an animation, it also zeroes out X velocity. So if you get a running start, jump immediately, hit the first platform, and press jump again to go to the second platform, you will stop and enter a crouch animation before that second jump takes off even though you are still holding right. Let’s just get rid of the pre-jump sequence. How about we leave the skip ahead logic here for a running jump and make a small modification here - at the end of the pre-jump setup logic? Instead of skipping to Bank Switch to Jump Graphics, we will skip to Start Running Jump - the area directly beneath it. One Game Genie code will do it. All of the modified values within the pre-jump code we just executed will be overwritten with running jump values no matter what. That makes the platforming a lot easier than it was. Easier, perhaps, but not “easy.” I know you don’t want additional problems, but oh, we certainly have them. In order to land on a platform, you need to check for environmental collision detection. Here is a platform. Here is the player. Seems like the width of the player sprites would dictate the area where this entity would collide with the platform, but no. Platforming checks in The Terminator are performed using… one pixel. 
+The first is the standing jump versus the running jump. This may seem minor - once you know a running jump starts immediately, just make sure you always press left or right before you jump. This could be a good approach to starting a jump from a standstill, but what if you want to bunnyhop up several platforms like those found in the very first screen of the game? Landing not only starts an animation, it also zeroes out X velocity. So if you get a running start, jump immediately, hit the first platform, and press jump again to go to the second platform, you will stop and enter a crouch animation before that second jump takes off even though you are still holding right. Let’s just get rid of the pre-jump sequence. How about we leave the skip ahead logic here for a running jump and make a small modification here - at the end of the pre-jump setup logic? Instead of skipping to Bank Switch to Jump Graphics, we will skip to Start Running Jump - the area directly beneath it. One Game Genie code will do it. All of the modified values within the pre-jump code we just executed will be overwritten with running jump values no matter what. That makes the platforming a lot easier than it was. Easier, perhaps, but not “easy.” I know you don’t want additional problems, but oh, we certainly have them. In order to land on a platform, you need to check for environmental collision detection. Here is a platform. Here is the player. Seems like the width of the player sprites would dictate the area where this entity would collide with the platform, but no. Platforming checks in The Terminator are performed using… one pixel.
 
 ![image9](images\image9.png)
 
