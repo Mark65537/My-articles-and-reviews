@@ -32,11 +32,25 @@ CMP #$1F ; Cap Lives Remaining at 6
 CMP #$22 ; Cap Lives Remaining at 9
 ```
 
-## **Why is platforming in this game so difficult?**
+## **Why is platforming so difficult?**
 
-![image3](images\image3.png)
+Now for the main event - Why is platforming in this game so difficult? We begin with the word “jump.” The start of a jump in this game is inconsistent. Jumping in place has a wind-up. You bend your knees before you jump - just as you would in real life, I hope.
 
-Now for the main event - Why is platforming in this game so difficult? We begin with the word “jump.” The start of a jump in this game is inconsistent. Jumping in place has a wind-up. You bend your knees before you jump - just as you would in real life, I hope. Unfortunately, an attempt at realistic animation like this creates a substantial delay between a button press and leave the ground. So we have perceived input delay even though we are simply waiting on animation. You could argue that this is a design decision. The game isn’t trying to be Mega Man, and players just have to get used to that intentional delay. Now if you jump while running, the jump begins immediately… also kinda like it would in real life. Maybe these jumps are more realistic in a way, but the discrepancy is frustrating. Now… there is no fate but what we make for ourselves. Therefore… every game is a sandbox game when you can reprogram it. Let’s get into this code. This is the logic sequence executed once a valid jump action has been detected.
+![jumping](images\jumping.png)
+
+Unfortunately, an attempt at realistic animation like this creates a substantial delay between a button press and leave the ground. So we have perceived input delay even though we are simply waiting on animation. You could argue that this is a design decision. The game isn’t trying to be Mega Man, and players just have to get used to that intentional delay. Now if you jump while running, the jump begins immediately… also kinda like it would in real life. Maybe these jumps are more realistic in a way, but the discrepancy is frustrating. Now… "there is no fate but what we make for ourselves." Therefore… "Every game is a sandbox game when you can reprogram it." Let’s get into this code.
+
+```asm
+Player_Jump_Start_Sub:
+    LDA Player_Can_Jump_552
+    BEQ Player_Jump_Start_RTS
+    LDA #$00
+    STA Player_Can_Jump_552
+    STA Player_Moving_Laterally_Flag_551
+    
+```
+
+This is the logic sequence executed once a valid jump action has been detected.
 
 ![image4](images\image4.png)
 
