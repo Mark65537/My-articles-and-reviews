@@ -1,77 +1,163 @@
-# Как я пытался считать переменные с ПЛК с помощью Modbus, чтобы потом вывести в приложение на C#
+# Как я читал переменные из ПЛК по Modbus и выводил их в C#-приложение
 
 ## Введение
 
-Modbus — это открытый протокол связи, широко используемый в промышленной автоматизации для обмена данными между устройствами. Протокол работает по принципу "мастер-слейв" (master-slave), где мастер запрашивает данные у подчиненных устройств (слейвов).
+Modbus — это открытый и очень распространённый протокол обмена данными в промышленной автоматизации. Он работает по модели master–slave: мастер (например, PC-приложение) запрашивает данные у ведомого устройства (ПЛК), получая или записывая значения регистров.
 
-В данной статье описывается... 
-todo добавить основную задачу которая решает статья
-для работы с Modbus в среде CODESYS и чтения переменных ПЛК (программируемого логического контроллера) в приложение на C#.
+На практике Modbus кажется простым — всего лишь массив 16-битных регистров. Но как только возникает задача читать типизированные переменные, поддерживать несколько проектов в одном ПЛК, минимизировать количество запросов и безопасно работать с соединением, всё быстро усложняется.
+
+В этой статье я описываю реальный подход, который использовал для чтения переменных из ПЛК (CODESYS + Modbus TCP) и отображения их в приложении на C#.
 
 ## Задача
 
-todo опиши задачу
+Исходные требования были такие:
 
-## Подготовка
+* Читать значения переменных из ПЛК по Modbus TCP
+* Работать со всеми типами данных (bool, числа, enum, строки и т.д.)
+* Поддерживать ситуацию, когда в ПЛК могут быть загружены разные проекты
+* Минимизировать количество Modbus-запросов
+* Иметь удобный, типизированный API на стороне C#
 
-### Структура данных
+Обеспечить контроль соединения и автоматическое переподключение
 
-Структура данных организована следующим образом:
+Из этого сразу следует важный вывод:
+Modbus — это транспорт, а вся структура данных должна быть на стороне приложения.
 
-todo добавить что заголовок нужен чтобы определять что это за проект, так как на ПЛК может заливаться несколько проектов
+## Структура данных
 
-- **Первые 2 регистра** — заголовок устройства (тип устройства и версия)
-- **Остальные регистры** — значения переменных
+Вся область регистров делится на две логические части:
 
-Имена переменных и метаданные не хранятся в ПЛК — они жестко прописаны в карте переменных на стороне C# приложения. Карта переменных — это отдельный класс, содержащий описания всех переменных с их адресами, типами и размерами.
+1. Заголовок проекта
+2. Значения переменных
+
+>Имена переменных и их метаданные не хранятся в ПЛК.
+>Они жёстко описаны в карте переменных на стороне C#.
+
+### Заголовок
+
+В заголовке хранится служебная информация о загруженном в ПЛК проекте.
+
+На первом этапе он задумывался как простая структура данных, но довольно быстро стало ясно, что такой подход не задаёт никаких правил: легко забыть добавить поле, перепутать порядок или создать «неполноценный» заголовок, который формально существует, но по смыслу бесполезен. Оформление заголовка в виде класса решает эту проблему. Класс явно описывает, какие данные обязаны присутствовать в заголовке, и заставляет пользователя указать их при создании объекта. Таким образом, сам код становится документацией: из конструктора и свойств сразу видно, что именно считается корректным заголовком и без каких полей он не может существовать.
+
+Размер заголовка остаётся фиксированным, при этом его можно вычислять автоматически, например с использованием рефлексии.
+
+### Зачем нужен заголовок
+
+Заголовок нужен для того, чтобы определить:
+
+- какой проект сейчас загружен в ПЛК
+- совместима ли версия проекта с приложением
+
+Это важно, потому что:
+
+- в один и тот же ПЛК могут загружаться разные проекты
+- структура регистров может отличаться
+
+Читать «чужую» карту переменных — прямой путь к ошибкам.
+
+### Формат заголовка
+
+Здесь представлена таблица с описанием минимально необходимых полей заголовка:
+
+| Offset from | Size | Note                                           |
+|-------------|------|------------------------------------------------|
+| 0           | 1    | тип проекта. например ВФУ |
+| 1           | 1    | версия проекта                    |
 
 ### Класс PlcValue
 
-todo переделать название чтобы небыло конкретного класса
+Todo переделать название чтобы не было конкретного класса
 
 Самая простая реализация класса для представления переменной ПЛК:
 
 ```cs
-public class PlcValue<T> : IEquatable<PlcValue<T>>
+/// <summary>
+/// Представляет значение переменной ПЛК, прочитанной по Modbus.
+/// </summary>
+[DebuggerDisplay("Name: {Name} Value: {Value} Address: {Address} RegSize: {RegSize} ByteSize: {ByteSize}")]
+public class PlcValue : IEquatable<PlcValue>, INotifyPropertyChanged
 {
     private static readonly HashSet<string> _usedNames = new();
 
-    public PlcValue(string name, T value, ushort address)
+    private object? _value;
+
+    public PlcValue(string name, Type type, UInt16 address)
     {
         if (string.IsNullOrWhiteSpace(name))
             throw new ArgumentException("Имя не может быть пустым", nameof(name));
 
         // Проверяем уникальность нового имени
-        if (_usedNames.Contains(name))
+        if (!_usedNames.Add(name))
             throw new ArgumentException($"Имя \"{name}\" уже используется.", nameof(name));
 
-        _usedNames.Add(name);
+        CSType = type ?? throw new ArgumentNullException(nameof(type));
         Name = name;
-        Value = value!;
         Address = address;
-
-        RegSize = CalculateRegSize(typeof(T));
+        RegSize = CalculateRegSize(type);
         ByteSize = (UInt32)RegSize * 2;
     }
-    public PlcValue(string name, T value, ushort address, ushort regSize)
-        : this(name, value, address)
+    public PlcValue(string name, object value, Type type, UInt16 address) : this(name, type, address)
+    {
+        Value = ConvertToCSType(value, CSType);
+    }
+    public PlcValue(string name, Type type, ushort address, UInt16 regSize)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            throw new ArgumentException("Имя не может быть пустым", nameof(name));
+
+        // Проверяем уникальность нового имени
+        if (!_usedNames.Add(name))
+            throw new ArgumentException($"Имя \"{name}\" уже используется.", nameof(name));
+
+        if (regSize == 0)
+            throw new ArgumentOutOfRangeException(nameof(regSize), "Размер регистра должен быть больше 0.");
+
+        CSType = type ?? throw new ArgumentNullException(nameof(type));
+        Name = name;
+        Address = address;
+
+        RegSize = regSize;
+        ByteSize = (uint)regSize * 2;
+    }
+    public PlcValue(string name, object value, Type type, UInt16 address, UInt16 regSize)
+        : this(name, value, type, address)
     {
         RegSize = regSize;
         ByteSize = (UInt32)RegSize * 2;
     }
+    public PlcValue(string name, object value, Type type, UInt16 address, UInt32 byteSize) :
+        this(name, value, type, address)
+    {
+        RegSize = (ushort)((byteSize + 1) / 2);
+        ByteSize = byteSize;
+    }
+
     /// <summary>
     /// Имя переменной. Уникальное среди всех экземпляров PlcValue.
     /// Не может быть null или пустой строкой.
     /// </summary>
     public string Name { get; }
     /// <summary>
-    /// Значение
+    /// Значение. Может быть не задано.
+    /// При изменении поднимает событие <see cref="PropertyChanged"/>,
+    /// чтобы привязки (WPF) могли обновить UI.
     /// </summary>
-    public T Value { get; }
+    public object? Value
+    {
+        get => _value;
+        set
+        {
+            if (!Equals(_value, value))
+            {
+                _value = value;
+                OnPropertyChanged(nameof(Value));
+            }
+        }
+    }
     /// <summary>
     /// Тип. НЕ null
     /// </summary>
-    public Type CSType => typeof(T);
+    public Type CSType { get; }
     /// <summary>
     /// Номер регистра. По умолчанию с 0
     /// </summary>
@@ -85,7 +171,9 @@ public class PlcValue<T> : IEquatable<PlcValue<T>>
     /// </summary>
     public UInt16 RegSize { get; }
 
-    public bool Equals(PlcValue<T>? other)
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    public bool Equals(PlcValue? other)
     {
         if (other is null)
             return false;
@@ -97,20 +185,88 @@ public class PlcValue<T> : IEquatable<PlcValue<T>>
             return a1.Length == a2.Length &&
                    a1.Cast<object>().SequenceEqual(a2.Cast<object>());
 
-        return EqualityComparer<T>.Default.Equals(Value, other.Value);
+        return EqualityComparer<object?>.Default.Equals(Value, other.Value);
     }
 
     public override bool Equals(object? obj)
-        => obj is PlcValue<T> other && Equals(other);
+        => obj is PlcValue other && Equals(other);
 
     public override int GetHashCode()
         => HashCode.Combine(Name, Value, CSType, Address);
 
-    public static bool operator ==(PlcValue<T>? left, PlcValue<T>? right)
-        => object.Equals(left, right);
+    public static bool operator ==(PlcValue? left, PlcValue? right)
+        => Equals(left, right);
 
-    public static bool operator !=(PlcValue<T>? left, PlcValue<T>? right)
-        => !object.Equals(left, right);
+    public static bool operator !=(PlcValue? left, PlcValue? right)
+        => !Equals(left, right);
+
+    protected virtual void OnPropertyChanged(string propertyName)
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
+
+    private static object ConvertToCSType(object value, Type targetType)
+    {
+        if (value == null)
+            throw new ArgumentNullException(nameof(value));
+
+        Type valueType = value.GetType();
+
+        // Уже совместимо
+        if (targetType.IsAssignableFrom(valueType))
+            return value;
+
+        try
+        {
+            // Enum
+            if (targetType.IsEnum)
+            {
+                if (value is string s)
+                    return Enum.Parse(targetType, s, ignoreCase: true);
+
+                return Enum.ToObject(targetType, value);
+            }
+
+            bool sourceIsFloating =
+                value is float ||
+                value is double ||
+                value is decimal;
+
+            bool targetIsInteger =
+                targetType == typeof(byte) ||
+                targetType == typeof(sbyte) ||
+                targetType == typeof(short) ||
+                targetType == typeof(ushort) ||
+                targetType == typeof(int) ||
+                targetType == typeof(uint) ||
+                targetType == typeof(long) ||
+                targetType == typeof(ulong);
+
+            // ❗ КРИТИЧЕСКАЯ ПРОВЕРКА
+            if (sourceIsFloating && targetIsInteger)
+            {
+                double d = Convert.ToDouble(value);
+
+                if (d % 1 != 0)
+                    throw new InvalidCastException(
+                        $"Дробное значение {d} не может быть приведено к целочисленному типу '{targetType.FullName}'."
+                    );
+            }
+
+            return Convert.ChangeType(value, targetType);
+        }
+        catch (InvalidCastException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidCastException(
+                $"Невозможно привести значение типа '{valueType.FullName}' к типу '{targetType.FullName}'.",
+                ex
+            );
+        }
+    }
 
     /// <summary>
     /// Вычисляет размер в регистрах на основе типа.
@@ -119,6 +275,9 @@ public class PlcValue<T> : IEquatable<PlcValue<T>>
     {
         if (type.IsEnum)
             type = Enum.GetUnderlyingType(type);
+
+        if (type == typeof(TimeSpan))
+            return 2;
 
         return Type.GetTypeCode(type) switch
         {
@@ -143,7 +302,11 @@ public class PlcValue<T> : IEquatable<PlcValue<T>>
 }
 ```
 
-если хотите добавлять его в массив то используйте интерфейс IPlcValue
+todo переструктурируй
+
+Если хотите чтобы тип был генерик, то вам нужен интерфейс, но я бы не советовал так делать так как потом нужно будет использовать рефлексию.
+
+Если хотите добавлять его в массив, то используйте интерфейс IPlcValue
 
 ```cs
 public interface IPlcValue
@@ -168,9 +331,9 @@ public interface IPlcValue
 }
 ```
 
-RegSize добавлен из за удобства программирования, если он вам не нужен можете убрать
+RegSize добавлен из-за удобства программирования, если он вам не нужен можете убрать
 
-тогда у нас остается проблема с типом. Нельзя так просто создать PlcValue не зная тип заранее, если тип определяется в рантайме
+Тогда у нас остается проблема с типом. Нельзя так просто создать PlcValue не зная тип заранее, если тип определяется в рантайме
 
 ```cs
 IPlcValue[] templates = GetVarTemplates();
@@ -221,7 +384,6 @@ public class PlcValue<T> : IPlcValue
 result[i] = template.CreateNew(value);
 ```
 
-
 ## Чтение данных
 
 Для чтения данных из ПЛК можно реализовать несколько подходов:
@@ -232,6 +394,7 @@ result[i] = template.CreateNew(value);
 - Отдельная функция для чтения значений переменных
 
 ### Вариант 2: Единая функция
+
 todo дописать что этот вариант выбран
 
 Одна функция `ReadAll()`, которая:
@@ -276,6 +439,22 @@ foreach (var plcValue in data.PlcValues)
 - Enum в CODESYS хранится как базовый целочисленный тип (обычно UInt16)
 - При чтении используется базовый тип, затем значение преобразуется в enum
 - Требуется явное указание базового типа в маршаллере
+
+### Тестирование
+
+Для полного тестирования нужен некий консольный эмулятор, который просто открывает TCP соединение и отдает и принимает регистры.
+Вообще его реализация довольно простая.
+
+Но можно обойтись без него.
+
+если вы знаете какие  вас регистры и что вы должны получить то можно написать подобный тест:
+
+> NOTE
+> код очень длинный из-за больших массивов, поэтому я опишу только его основные части
+
+```csharp
+
+```
 
 ## Запись данных
 
@@ -341,23 +520,26 @@ void FlushChanges()
 
 ## Константы
 
-Встает вопрос: как хранить константы, которые используются в приложении?
+Встает вопрос: как хранить константы, которые нужны для протокола Modbus?
+
+### Что точно нужно для констант
+
+1. Адресс начала
+ ...
+fix можно добавить тип регистра
 
 ### Варианты хранения констант
 
-1. **Статические поля в классе карты переменных**
+1. **Статические поля в классе Reader**
 
 ```csharp
-
-1. **Статические поля в классе карты переменных**
-   ```csharp
-   public class MyVarMap
-   {
-       public const ushort HEADER_ADDRESS = 10;
-       public const ushort HEADER_SIZE = 2;
-       // ...
-   }
-   ```
+public class MyVarMap
+{
+    public const ushort HEADER_ADDRESS = 10;
+    public const ushort HEADER_SIZE = 2;
+    // ...
+}
+```
 
 2. **Отдельный класс с константами**
 
@@ -377,46 +559,36 @@ void FlushChanges()
 4. **Атрибуты на свойствах** (для метаданных)
 
 ```csharp
-   [ModbusAddress(100)]
-   [ModbusType(typeof(float))]
-   public PlcValue Temperature { get; set; }
-   ```
+[ModbusAddress(100)]
+[ModbusType(typeof(float))]
+public PlcValue Temperature { get; set; }
+```
 
-## Работа с байтами
+5. **В классах которые им принадлежат**
 
-В отличие от чтения файлов, где структура данных фиксирована, при работе с Modbus:
-
-- Заголовок и структура данных могут меняться в зависимости от версии протокола
-- Адреса переменных могут отличаться для разных типов устройств
-- Если вы хотите обращаться к элементам через точку (например, `data.Temperature`), лучше использовать класс карты переменных с типизированными свойствами
-
-**Пример типизированного доступа:**
+например если это класс заголовка то там храняться константы связанные с заголовком
 
 ```csharp
-public class MyVarMap
+public class ModbusHeader
 {
-    public PlcValue<float> Temperature { get; set; }
-    public PlcValue<ushort> Status { get; set; }
+    public const ushort HEADER_ADDRESS = 10;
+    public const ushort HEADER_SIZE = 2;
 }
-
-// Использование
-var data = reader.ReadAll(slaveId);
-float temp = (float)data.PlcValues
-    .First(v => v.Name == "Temperature")
-    .Value;
 ```
 
 ## Подключение и мониторинг соединения
 
-Так как Modbus работает по обычному TCP соединению, у него нет встроенных способов определить, разорвалось ли соединение или произошла ошибка во время выполнения программы. Для этого нужен механизм проверки соединения (heartbeat).
+Так как Modbus работает по обычному TCP соединению, у него нет встроенных способов определить, разорвалось ли соединение или произошла ошибка во время выполнения программы. Для этого нужен механизм проверки соединения.
 
 ### Проблема с циклом while
+
+todo нужно убрать этот параграф а то что внутри переместить в другое место
 
 Цикл `while` будет опрашивать соединение каждый кадр, что избыточно и создает большую нагрузку. Лучше использовать таймер с определенным интервалом.
 
 ### Варианты проверки подключения
 
-#### 1. Проверка через чтение регистра (рекомендуется)
+#### 1. Проверка через чтение регистра
 
 Вместо ping можно попытаться прочитать один регистр. Если чтение проходит успешно, значит Modbus-сервер подключен:
 
@@ -426,9 +598,6 @@ try
     // Минимальный Modbus-запрос (heartbeat)
     _master.ReadHoldingRegisters(_slaveId, 0, 1);
     IsConnected = true;
-    
-    // Читаем данные
-    ReadVariables();
 }
 catch
 {
@@ -442,7 +611,9 @@ catch
 - Минимальная нагрузка (чтение одного регистра)
 - Надежный способ определения состояния устройства
 
-#### 2. Проверка через сокет (альтернативный способ)
+#### 2. Проверка через сокет
+
+Данный вариант еще не тестировался так что не могу полностью утверждать о его работоспособности.
 
 ```csharp
 private bool IsConnected()
@@ -469,7 +640,8 @@ private bool IsConnected()
 
 ### Реализация автоматического переподключения
 
-Для автоматического управления соединением используется класс `ModbusReconnectionTask`:
+Для автоматического управления соединением, лучше использовать отдельный класс, назовем его: `ModbusReconnectionTask`.
+Пример его использования:
 
 ```csharp
 var reconnectionTask = new ModbusReconnectionTask(
@@ -513,17 +685,22 @@ reconnectionTask.ReadError += (sender, ex) =>
 
 Modbus работает с 16-битными регистрами (UInt16), но в C# используются различные типы:
 
+todo надо как то один раз написать про типы
+
 - `bool`, `byte`, `sbyte`, `Int16`, `UInt16` — 1 регистр
 - `Int32`, `UInt32`, `float`, `TimeSpan`, `DateTime` — 2 регистра
 - `Int64`, `UInt64`, `double` — 4 регистра
 - `string` — переменное количество регистров
 - Массивы — зависят от размера элемента и длины массива
 
+> NOTE
+> еще есть структуры с которыми пока непонятно как работать
+
 ### Реализация маршаллера
 
 Класс `ModbusValueMarshaler` предоставляет два основных метода:
 
-#### 1. Marshal — преобразование из регистров в C# типы
+1. Marshal — преобразование из регистров в C# типы
 
 ```csharp
 UInt16[] raw = { 0x1234, 0x5678 };
@@ -540,7 +717,7 @@ object? value = ModbusValueMarshaler.Marshal(raw, typeof(UInt32));
 - Массивы: преобразование каждого элемента
 - Enum: преобразование через базовый тип
 
-#### 2. Unmarshal — преобразование из C# типов в регистры
+2. Unmarshal — преобразование из C# типов в регистры
 
 ```csharp
 float value = 25.5f;
@@ -550,10 +727,17 @@ UInt16[] regs = ModbusValueMarshaler.Unmarshal(value, typeof(float));
 
 **Особенности:**
 
-
 - Порядок байтов: старшие биты в первом регистре (big-endian)
 - Для строк требуется указание размера буфера
 - Enum преобразуется в базовый целочисленный тип
+лучше всего Enum приравнивать к UInt16
+
+```cs
+public enum DevType : UInt16
+{
+    VFU = 1,
+}
+```
 
 ### Примеры преобразований
 
@@ -600,6 +784,8 @@ for (int i = 0; i < str.Length; i++)
 ```
 
 ## Вывод
+
+todo переписать чтобы он не был структурированным а шел как текст
 
 Создание библиотеки для работы с Modbus в C# требует решения нескольких задач:
 
