@@ -50,6 +50,21 @@ Modbus — это протокол по адресам (coil / discrete input / 
 
 Я не буду углубляться в реализацию плк части так как это выходит за рамки данной статьи здесь мы будем больше говорить про взаимодействие его с макбасом
 
+## Задача
+
+Исходные требования были такие:
+
+* Читать значения переменных из ПЛК по Modbus TCP
+* Работать со всеми типами данных (bool, числа, enum, строки и т.д.)
+* Поддерживать ситуацию, когда в ПЛК могут быть загружены разные проекты
+* Минимизировать количество Modbus-запросов
+* Иметь удобный, типизированный API на стороне C#
+
+Обеспечить контроль соединения и автоматическое переподключение
+
+Из этого сразу следует важный вывод:
+Modbus — это транспорт, а вся структура данных должна быть на стороне приложения.
+
 ## Структура данных
 
 Структура данных организована следующим образом:
@@ -74,6 +89,322 @@ todo добавить что заголовок нужен чтобы опред
 |-------------|-----------|------|------------------------------------------------|
 | 0           | 1         | 1    | тип проекта. например ВФУ |
 | 1           | 1         | 1    | версия проекта                    |
+
+### Класс PlcValue
+
+Самая простая реализация класса для представления переменной ПЛК:
+
+```cs
+/// <summary>
+/// Представляет значение переменной ПЛК, прочитанной по Modbus.
+/// </summary>
+[DebuggerDisplay("Name: {Name} Value: {Value} Address: {Address} RegSize: {RegSize} ByteSize: {ByteSize}")]
+public class PlcValue : IEquatable<PlcValue>, INotifyPropertyChanged
+{
+    private static readonly HashSet<string> _usedNames = new();
+
+    private object? _value;
+
+    public PlcValue(string name, Type type, UInt16 address)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            throw new ArgumentException("Имя не может быть пустым", nameof(name));
+
+        // Проверяем уникальность нового имени
+        if (!_usedNames.Add(name))
+            throw new ArgumentException($"Имя \"{name}\" уже используется.", nameof(name));
+
+        CSType = type ?? throw new ArgumentNullException(nameof(type));
+        Name = name;
+        Address = address;
+        RegSize = CalculateRegSize(type);
+        ByteSize = (UInt32)RegSize * 2;
+    }
+    public PlcValue(string name, object value, Type type, UInt16 address) : this(name, type, address)
+    {
+        Value = ConvertToCSType(value, CSType);
+    }
+    public PlcValue(string name, Type type, ushort address, UInt16 regSize)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            throw new ArgumentException("Имя не может быть пустым", nameof(name));
+
+        // Проверяем уникальность нового имени
+        if (!_usedNames.Add(name))
+            throw new ArgumentException($"Имя \"{name}\" уже используется.", nameof(name));
+
+        if (regSize == 0)
+            throw new ArgumentOutOfRangeException(nameof(regSize), "Размер регистра должен быть больше 0.");
+
+        CSType = type ?? throw new ArgumentNullException(nameof(type));
+        Name = name;
+        Address = address;
+
+        RegSize = regSize;
+        ByteSize = (uint)regSize * 2;
+    }
+    public PlcValue(string name, object value, Type type, UInt16 address, UInt16 regSize)
+        : this(name, value, type, address)
+    {
+        RegSize = regSize;
+        ByteSize = (UInt32)RegSize * 2;
+    }
+    public PlcValue(string name, object value, Type type, UInt16 address, UInt32 byteSize) :
+        this(name, value, type, address)
+    {
+        RegSize = (ushort)((byteSize + 1) / 2);
+        ByteSize = byteSize;
+    }
+
+    /// <summary>
+    /// Имя переменной. Уникальное среди всех экземпляров PlcValue.
+    /// Не может быть null или пустой строкой.
+    /// </summary>
+    public string Name { get; }
+    /// <summary>
+    /// Значение. Может быть не задано.
+    /// При изменении поднимает событие <see cref="PropertyChanged"/>,
+    /// чтобы привязки (WPF) могли обновить UI.
+    /// </summary>
+    public object? Value
+    {
+        get => _value;
+        set
+        {
+            if (!Equals(_value, value))
+            {
+                _value = value;
+                OnPropertyChanged(nameof(Value));
+            }
+        }
+    }
+    /// <summary>
+    /// Тип. НЕ null
+    /// </summary>
+    public Type CSType { get; }
+    /// <summary>
+    /// Номер регистра. По умолчанию с 0
+    /// </summary>
+    public UInt16 Address { get; }
+    /// <summary>
+    /// Размер в байтах. Если не задан, вычисляется автоматически на основе типа.
+    /// </summary>
+    public UInt32 ByteSize { get; }
+    /// <summary>
+    /// Размер в регистрах. Если не задан, вычисляется автоматически на основе типа.
+    /// </summary>
+    public UInt16 RegSize { get; }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    public bool Equals(PlcValue? other)
+    {
+        if (other is null)
+            return false;
+
+        if (ReferenceEquals(Value, other.Value))
+            return true;
+
+        if (Value is Array a1 && other.Value is Array a2)
+            return a1.Length == a2.Length &&
+                   a1.Cast<object>().SequenceEqual(a2.Cast<object>());
+
+        return EqualityComparer<object?>.Default.Equals(Value, other.Value);
+    }
+
+    public override bool Equals(object? obj)
+        => obj is PlcValue other && Equals(other);
+
+    public override int GetHashCode()
+        => HashCode.Combine(Name, Value, CSType, Address);
+
+    public static bool operator ==(PlcValue? left, PlcValue? right)
+        => Equals(left, right);
+
+    public static bool operator !=(PlcValue? left, PlcValue? right)
+        => !Equals(left, right);
+
+    protected virtual void OnPropertyChanged(string propertyName)
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
+
+    private static object ConvertToCSType(object value, Type targetType)
+    {
+        if (value == null)
+            throw new ArgumentNullException(nameof(value));
+
+        Type valueType = value.GetType();
+
+        // Уже совместимо
+        if (targetType.IsAssignableFrom(valueType))
+            return value;
+
+        try
+        {
+            // Enum
+            if (targetType.IsEnum)
+            {
+                if (value is string s)
+                    return Enum.Parse(targetType, s, ignoreCase: true);
+
+                return Enum.ToObject(targetType, value);
+            }
+
+            bool sourceIsFloating =
+                value is float ||
+                value is double ||
+                value is decimal;
+
+            bool targetIsInteger =
+                targetType == typeof(byte) ||
+                targetType == typeof(sbyte) ||
+                targetType == typeof(short) ||
+                targetType == typeof(ushort) ||
+                targetType == typeof(int) ||
+                targetType == typeof(uint) ||
+                targetType == typeof(long) ||
+                targetType == typeof(ulong);
+
+            // ❗ КРИТИЧЕСКАЯ ПРОВЕРКА
+            if (sourceIsFloating && targetIsInteger)
+            {
+                double d = Convert.ToDouble(value);
+
+                if (d % 1 != 0)
+                    throw new InvalidCastException(
+                        $"Дробное значение {d} не может быть приведено к целочисленному типу '{targetType.FullName}'."
+                    );
+            }
+
+            return Convert.ChangeType(value, targetType);
+        }
+        catch (InvalidCastException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidCastException(
+                $"Невозможно привести значение типа '{valueType.FullName}' к типу '{targetType.FullName}'.",
+                ex
+            );
+        }
+    }
+
+    /// <summary>
+    /// Вычисляет размер в регистрах на основе типа.
+    /// </summary>
+    private static ushort CalculateRegSize(Type type)
+    {
+        if (type.IsEnum)
+            type = Enum.GetUnderlyingType(type);
+
+        if (type == typeof(TimeSpan))
+            return 2;
+
+        return Type.GetTypeCode(type) switch
+        {
+            TypeCode.Boolean or
+            TypeCode.Byte or
+            TypeCode.SByte or
+            TypeCode.Int16 or
+            TypeCode.UInt16 => 1,
+
+            TypeCode.Int32 or
+            TypeCode.UInt32 or
+            TypeCode.Single or
+            TypeCode.DateTime => 2,
+
+            TypeCode.Int64 or
+            TypeCode.UInt64 or
+            TypeCode.Double => 4,
+
+            _ => 1 // массивы, строки — задаются вручную
+        };
+    }
+}
+```
+
+Если хотите чтобы тип был генерик, то вам нужен интерфейс, но я бы не советовал так делать так как при конвертации значений из ПЛК нужно будет использовать рефлексию.
+
+Если хотите добавлять его в массив, то используйте интерфейс IPlcValue
+
+```cs
+public interface IPlcValue
+{
+    /// <summary>
+    /// Имя переменной. Уникальное среди всех экземпляров PlcValue.
+    /// Не может быть null или пустой строкой.
+    /// </summary>
+    public string Name { get; }
+    /// <summary>
+    /// Тип. НЕ null
+    /// </summary>
+    public Type CSType { get; }
+    /// <summary>
+    /// Номер регистра. По умолчанию с 0
+    /// </summary>
+    public UInt16 Address { get; }
+    /// <summary>
+    /// Размер в регистрах. Если не задан, вычисляется автоматически на основе типа.
+    /// </summary>
+    public UInt16 RegSize { get; }
+}
+```
+
+RegSize добавлен из-за удобства программирования, если он вам не нужен можете убрать.
+
+Тогда у нас остается проблема с типом. Нельзя так просто создать PlcValue не зная тип заранее, если тип определяется в рантайме
+
+```cs
+IPlcValue[] templates = GetVarTemplates();
+IPlcValue[] result = new IPlcValue[templates.Length];
+for (int i = 0; i < templates.Length; i++)
+   IPlcValue template = templates[i];
+   object? value = ModbusValueMarshaler.Marshal(slice, template.CSType);
+   result[i] = new PlcValue<typeof(template.CSType)> (template.Name, (template.CSType)value, template.Address);
+}
+```
+
+есть несколько вариантов как это можно исправить
+
+1 вариант:
+
+использовать рефлексию
+
+```cs
+result[i] = (IPlcValue)Activator.CreateInstance(
+    typeof(PlcValue<>).MakeGenericType(template.CSType),
+    template.Name,
+    value!,
+    template.Address
+)!;
+```
+
+2 вариант:
+
+Добавь фабрику в IPlcValue
+
+```cs
+public interface IPlcValue
+{
+    //остальной код
+    IPlcValue CreateNew(object value);
+}
+
+public class PlcValue<T> : IPlcValue
+{
+    //остальной код
+    public IPlcValue CreateNew(object value) => new PlcValue<T>(Name, (T)value, Address);
+}
+```
+
+в коде
+
+```cs
+result[i] = template.CreateNew(value);
+```
 
 ## Особенности Modbus
 
@@ -564,3 +895,9 @@ ctor(MBSettings settings, object _varmap, Reader или Writer)
 - Предоставляет типизированный API для работы с переменными ПЛК
 - Автоматически управляет соединением и переподключением
 - Оптимизирует производительность через минимизацию запросов
+
+## Нерешенные вопросы
+
+1. Нужно ли контролировать значения которые превышают в данном типе. например сейчас стоит условие на bool: если знавение регистра больше 0 то возвращается true.
+2. Действительно ли нужны эксклюзивные имена
+3. 
