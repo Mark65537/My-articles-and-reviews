@@ -113,9 +113,11 @@ public class ModbusVariable : INotifyPropertyChanged
 
 #### Генерики или нет?
 
-Теоретически можно сделать `ModbusVariable<T>`, чтобы тип был строго задан на этапе компиляции. Однако на практике это усложняет чтение данных из ПЛК, потому что тип определяется в рантайме, а значит придётся использовать рефлексию при создании объектов.
+Идея сделать `ModbusVariable<T>` выглядит привлекательно: тип значения фиксируется на этапе компиляции, код становится строже и безопаснее. Однако в реальной задаче работы с ПЛК тип переменной часто известен только во время выполнения — он приходит из карты переменных, полученной через рефлексию.
 
-Поэтому удобнее хранить тип как Type и работать через object, но если вы все таки сделать класс генерик то вам нужно создать интерфейс, так как вы не можете создать коллекцию обектов `ModbusVariable<T>`
+В таком сценарии использование generics начинает усложнять архитектуру. Проще хранить тип в отдельном свойстве, а тип Value делать object, потому что именно так мы можем динамически создавать переменные на основании метаданных.
+
+Если всё же требуется generic-реализация, без интерфейса не обойтись — иначе невозможно собрать коллекцию переменных разных типов. Например:
 
 ```cs
 public interface IModbusVariable
@@ -127,7 +129,58 @@ public interface IModbusVariable
 }
 ```
 
+Можно конечно добавлить в интерфейс `object? Value { get; set; }`, но это не имеет большого смысла, так как одна из целей использования generics — как раз уйти от универсального object. Типизированные переменные формируются на основе карты, после чего необходимо инициализировать конкретные реализации интерфейса. Проблема в том, что даже если тип хранится в свойстве `CSType`, нельзя написать что-то вроде `new ModbusVariable<typeof(template.CSType)>(...)`, потому что параметр generic-типа должен быть известен на этапе компиляции. Рассмотрим пример:
 
+```cs
+IModbusVariable[] templates = GetVarTemplates();// получаем массив ModbusVariable, преобразовав некий класс через рефлексию
+
+for (int i = 0; i < templates.Length; i++)
+{
+    var template = templates[i];
+    object? value = ModbusValueMarshaler.Marshal(slice, template.CSType);
+    template = new ModbusVariable<typeof(template.CSType)> (template.Name, (template.CSType)value, template.Address);
+}
+```
+
+Такой код не скомпилируется именно из-за того, что T нельзя определить во время выполнения. Возникает вопрос — как создать типизированный объект, если тип известен только в рантайме?
+Первый вариант — использовать рефлексию:
+
+```cs
+result[i] = (IModbusVariable)Activator.CreateInstance(
+    typeof(ModbusVariable<>).MakeGenericType(template.CSType),
+    template.Name,
+    value!,
+    template.Address
+)!;
+```
+
+Второй вариант — добавить фабричный метод в интерфейс, чтобы каждая реализация сама знала, как создать новый экземпляр своего типа:
+
+```cs
+public interface IModbusVariable
+{
+    string Name { get; }
+    Type CSType { get; }
+    ushort Address { get; }
+    ushort RegSize { get; }
+
+    IModbusVariable CreateNew(object value);
+}
+```
+
+Реализация:
+
+```cs
+public class ModbusVariable<T> : IModbusVariable
+{
+    // ...
+
+    public IModbusVariable CreateNew(object value)
+        => new ModbusVariable<T>(Name, (T)value, Address);
+}
+```
+
+Такой подход позволяет убрать прямое использование рефлексии из основного кода и делает архитектуру более чистой и контролируемой.
 
 ## Чтение данных
 
