@@ -186,18 +186,72 @@ public class ModbusVariable<T> : IModbusVariable
 
 Для чтения данных из ПЛК можно реализовать несколько подходов:
 
-### Вариант 1: Раздельные функции
+**Вариант 1. Раздельные функции:**
 
 - Отдельная функция для чтения заголовка
 - Отдельная функция для чтения значений переменных
 
-### Вариант 2: Единая функция
+```cs
+public ST_Header ReadHeader(UInt16[] regs)
+{
+    return new ST_Header
+    {
+        DevType = (DevType)regs[0],
+        Version = regs[1]
+    };
+}
 
-todo дописать что этот вариант выбран
+public PlcValue[] ReadValues(byte slaveId)
+{
+    PlcValue[] vars = GetVarTemplates();
+    int countVars = vars.Length;
+    if (countVars == 0)
+        return Array.Empty<PlcValue>();
+    ushort startAdr = vars[0].Address;
+    ushort endAdr = startAdr;
+    for (int i = 0; i < countVars; i++)
+    {
+        ushort lastAdr = (ushort)(
+            vars[i].Address +
+            vars[i].RegSize - 1);
+        if (lastAdr < startAdr) startAdr = vars[i].Address;
+        if (lastAdr > endAdr) endAdr = lastAdr;
+    }
+    ushort count = (ushort)(endAdr - startAdr + 1);
+    ushort[] regs = _master.ReadHoldingRegisters(slaveId, startAdr, count);
+    PlcValue[] result = new PlcValue[countVars];
+    for (int i = 0; i < countVars; i++)
+    {
+        PlcValue template = vars[i];
+        int varOffset = template.Address - startAdr;
+        int regCount = template.RegSize;
+        try
+        {
+
+            // берем столько регистров сколько нужно
+            UInt16[] slice = new UInt16[regCount];
+            //копирует байты в slice. Написано что этот метод быстрее
+            Buffer.BlockCopy(
+                regs, varOffset * sizeof(UInt16),
+                slice, 0,
+                regCount * sizeof(UInt16));
+
+            template.Value = ModbusValueMarshaler.Marshal(slice, template.CSType);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Не могу конвертировать элемент с индексом: {i}", ex);
+        }
+    }
+    return result;
+}
+```
+
+**Вариант 2. Единая функция:**
 
 Одна функция `ReadAll()`, которая:
 
-- Читает все регистры одним Modbus-запросом (оптимизация производительности)
+- Читает все регистры одним Modbus-запросом
 - Автоматически распределяет регистры на заголовок и значения переменных
 - Возвращает структурированный объект `MBDataScheme` с заголовком и массивом значений
 
@@ -223,20 +277,6 @@ foreach (var plcValue in data.PlcValues)
     Console.WriteLine($"{plcValue.Name}: {plcValue.Value}");
 }
 ```
-
-### Особенности работы с типами данных
-
-**Строки:**
-
-- Проблема: длина строки не всегда очевидна заранее
-- Решение: первый регистр содержит длину строки, остальные — символы
-- В карте переменных для строк необходимо явно указывать `RegSize`
-
-**Enum:**
-
-- Enum в CODESYS хранится как базовый целочисленный тип (обычно UInt16)
-- При чтении используется базовый тип, затем значение преобразуется в enum
-- Требуется явное указание базового типа в маршаллере
 
 ### Тестирование
 
