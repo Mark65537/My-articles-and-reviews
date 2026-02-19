@@ -960,6 +960,145 @@ public PlcValue(string name, T value, UInt16 address, UInt32 ByteSize)
 - контроль типов. Тип у value должен быть такой же как type.
 - Не использовать рефлексию
 
+## Константы
+
+Встает вопрос: как хранить константы, которые нужны для протокола Modbus?
+
+### Что точно нужно для констант
+
+1. Адресс начала
+ ...
+fix можно добавить тип регистра
+
+### Варианты хранения констант
+
+1. **Статические поля в классе Reader**
+
+```csharp
+public class MyVarMap
+{
+    public const ushort HEADER_ADDRESS = 10;
+    public const ushort HEADER_SIZE = 2;
+    // ...
+}
+```
+
+2. **Отдельный класс с константами**
+
+```csharp
+   public static class ModbusConstants
+   {
+       public const ushort HEADER_ADDRESS = 10;
+       public const ushort HEADER_SIZE = 2;
+       public const int DEFAULT_TIMEOUT_MS = 5000;
+   }
+   ```
+
+3. **Конфигурационный файл** (для значений, которые могут меняться)
+   - JSON, XML или appsettings.json
+   - Позволяет менять значения без перекомпиляции
+
+4. **Атрибуты на свойствах** (для метаданных)
+
+```csharp
+[ModbusAddress(100)]
+[ModbusType(typeof(float))]
+public PlcValue Temperature { get; set; }
+```
+
+5. **В классах которые им принадлежат**
+
+например если это класс заголовка то там храняться константы связанные с заголовком
+
+```csharp
+public class ModbusHeader
+{
+    public const ushort HEADER_ADDRESS = 10;
+    public const ushort HEADER_SIZE = 2;
+}
+```
+
+## Тестирование
+
+Для настоящего тестирования нужен некий консольный эмулятор, который просто открывает TCP соединение и отдает и принимает регистры.
+Вообще его реализация довольно простая.
+
+Но можно обойтись без него.
+
+чтение можно протестировать и без эмулятора.
+если вы знаете какие у вас регистры и что вы должны получить то можно написать подобный тест:
+
+> NOTE
+> код очень длинный из-за больших массивов, поэтому я опишу только его основные части
+
+```cs
+    private readonly UInt16[] allRegs =
+[
+    1,   // [0] адрес 10 - DevType.VFU = 1 (читается ReadHeader)
+    11,  // [1] адрес 11 - Version = 11 (читается ReadHeader)
+    1,   // [2] адрес 12 - BoolVar = true
+    13,  // [3] адрес 13 - ByteVar = 13
+
+    // TODO остальные простые типы
+
+    (UInt16)'H', // [33] адрес 43
+    (UInt16)'e', // [34] адрес 44
+    (UInt16)'l', // [35] адрес 45
+    (UInt16)'l', // [36] адрес 46
+    (UInt16)'o', // [37] адрес 47
+
+    // TODO остальные сложные типы
+];
+
+    private readonly PlcValue[] templates =
+{
+    new PlcValue("BoolVar", typeof(bool), 12),
+    new PlcValue("ByteVar", typeof(byte), 13),
+
+    // TODO остальные типы
+};
+
+[Fact]
+public void Test_RegsToPlcValues()
+{
+    // Arrange
+    MBReader reader = new(null, null!);
+
+    // Act
+    MBDataScheme result = reader.RegsToPlcValues(allRegs, templates);
+
+    // Assert - проверка заголовка
+    Assert.NotNull(result);
+    Assert.NotNull(result.Header);
+    Assert.Equal(expectedHeader.DevType, result.Header.DevType);
+    Assert.Equal(expectedHeader.Version, result.Header.Version);
+
+    // Assert - проверка количества переменных
+    Assert.NotNull(result.PlcValues);
+    Assert.Equal(templates.Length, result.PlcValues.Length);
+
+    // Assert - проверка значений переменных
+    // BoolVar (адрес 12, индекс в массиве 2)
+    Assert.Equal(true, result.PlcValues[0].Value);
+    Assert.Equal("BoolVar", result.PlcValues[0].Name);
+    Assert.Equal(typeof(bool), result.PlcValues[0].CSType);
+
+    // ByteVar (адрес 13, индекс в массиве 3)
+    Assert.Equal((byte)13, result.PlcValues[1].Value);
+    Assert.Equal("ByteVar", result.PlcValues[1].Name);
+
+    // UInt16Var (адрес 14, индекс в массиве 4)
+    Assert.Equal((ushort)2, result.PlcValues[2].Value);
+    Assert.Equal("UInt16Var", result.PlcValues[2].Name);
+
+    // TODO остальные типы
+}
+```
+
+Запись уже не получиться протестировать без эмулятора
+
+для полного тестирования, сначала запись потом чтение, так сказать e2e тест, нужен эмулятор.
+
 ## Оптимизация для измененных значений ПЛК-переменных
 
 UI←----------ViewModel←------------------------Task←--------------ModBus Server

@@ -278,6 +278,68 @@ foreach (var plcValue in data.PlcValues)
 }
 ```
 
+## Запись данных
+
+### Базовый подход: запись всех переменных
+
+Можно записывать все переменные одним запросом:
+
+```csharp
+MBWriter writer = new MBWriter(master);
+PlcValue[] allValues = { /* все переменные */ };
+writer.WriteValues(slaveId: 1, allValues);
+```
+
+### Оптимизация: запись только измененных переменных
+
+Для повышения производительности можно записывать только те переменные, которые изменились:
+
+**Реализация:**
+
+- Использовать отдельный массив/список для хранения измененных значений
+- Использовать словарь для быстрого поиска переменных по имени
+- Имя переменной уникально, поэтому его можно использовать в качестве ключа в словаре
+
+**Пример оптимизированной записи:**
+
+```csharp
+// Словарь для отслеживания изменений
+Dictionary<string, PlcValue> changedValues = new();
+
+// При изменении переменной
+void OnVariableChanged(string name, object newValue)
+{
+    var template = varMap.GetVariable(name);
+    var updatedValue = new PlcValue
+    {
+        Name = template.Name,
+        Address = template.Address,
+        Type = template.Type,
+        Value = newValue,
+        RegSize = template.RegSize
+    };
+    
+    changedValues[name] = updatedValue;
+}
+
+// Периодическая запись изменений
+void FlushChanges()
+{
+    if (changedValues.Count > 0)
+    {
+        PlcValue[] valuesToWrite = changedValues.Values.ToArray();
+        writer.WriteValues(slaveId: 1, valuesToWrite);
+        changedValues.Clear();
+    }
+}
+```
+
+**Преимущества:**
+
+- Меньше Modbus-запросов
+- Меньше нагрузка на сеть и ПЛК
+- Быстрее отклик приложения
+
 ## Тестирование
 
 Для полноценного тестирования можно использовать простой консольный эмулятор, который открывает TCP-соединение, принимает и возвращает массив регистров. Реализация такого эмулятора достаточно проста: по сути это TCP-сервер с минимальной логикой обработки Modbus-запросов. Однако на начальном этапе можно обойтись и без него.
@@ -355,125 +417,6 @@ public void Test_RegsToPlcValues()
 
 А вот запись без эмулятора протестировать полноценно не получится, потому что необходимо убедиться, что данные действительно отправляются и корректно принимаются другой стороной. Для полного тестирования — сначала запись, затем чтение (по сути e2e-сценарий) — требуется эмулятор или реальное устройство, которое будет играть роль ПЛК.
 
-## Запись данных
-
-### Базовый подход: запись всех переменных
-
-Можно записывать все переменные одним запросом:
-
-```csharp
-MBWriter writer = new MBWriter(master);
-PlcValue[] allValues = { /* все переменные */ };
-writer.WriteValues(slaveId: 1, allValues);
-```
-
-### Оптимизация: запись только измененных переменных
-
-Для повышения производительности можно записывать только те переменные, которые изменились:
-
-**Реализация:**
-
-- Использовать отдельный массив/список для хранения измененных значений
-- Использовать словарь для быстрого поиска переменных по имени
-- Имя переменной уникально, поэтому его можно использовать в качестве ключа в словаре
-
-**Пример оптимизированной записи:**
-
-```csharp
-// Словарь для отслеживания изменений
-Dictionary<string, PlcValue> changedValues = new();
-
-// При изменении переменной
-void OnVariableChanged(string name, object newValue)
-{
-    var template = varMap.GetVariable(name);
-    var updatedValue = new PlcValue
-    {
-        Name = template.Name,
-        Address = template.Address,
-        Type = template.Type,
-        Value = newValue,
-        RegSize = template.RegSize
-    };
-    
-    changedValues[name] = updatedValue;
-}
-
-// Периодическая запись изменений
-void FlushChanges()
-{
-    if (changedValues.Count > 0)
-    {
-        PlcValue[] valuesToWrite = changedValues.Values.ToArray();
-        writer.WriteValues(slaveId: 1, valuesToWrite);
-        changedValues.Clear();
-    }
-}
-```
-
-**Преимущества:**
-
-- Меньше Modbus-запросов
-- Меньше нагрузка на сеть и ПЛК
-- Быстрее отклик приложения
-
-## Константы
-
-Встает вопрос: как хранить константы, которые нужны для протокола Modbus?
-
-### Что точно нужно для констант
-
-1. Адресс начала
- ...
-fix можно добавить тип регистра
-
-### Варианты хранения констант
-
-1. **Статические поля в классе Reader**
-
-```csharp
-public class MyVarMap
-{
-    public const ushort HEADER_ADDRESS = 10;
-    public const ushort HEADER_SIZE = 2;
-    // ...
-}
-```
-
-2. **Отдельный класс с константами**
-
-```csharp
-   public static class ModbusConstants
-   {
-       public const ushort HEADER_ADDRESS = 10;
-       public const ushort HEADER_SIZE = 2;
-       public const int DEFAULT_TIMEOUT_MS = 5000;
-   }
-   ```
-
-3. **Конфигурационный файл** (для значений, которые могут меняться)
-   - JSON, XML или appsettings.json
-   - Позволяет менять значения без перекомпиляции
-
-4. **Атрибуты на свойствах** (для метаданных)
-
-```csharp
-[ModbusAddress(100)]
-[ModbusType(typeof(float))]
-public PlcValue Temperature { get; set; }
-```
-
-5. **В классах которые им принадлежат**
-
-например если это класс заголовка то там храняться константы связанные с заголовком
-
-```csharp
-public class ModbusHeader
-{
-    public const ushort HEADER_ADDRESS = 10;
-    public const ushort HEADER_SIZE = 2;
-}
-```
 
 ## Подключение и мониторинг соединения
 
