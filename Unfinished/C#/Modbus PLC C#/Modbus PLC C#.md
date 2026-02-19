@@ -278,21 +278,82 @@ foreach (var plcValue in data.PlcValues)
 }
 ```
 
-### Тестирование
+## Тестирование
 
-Для полного тестирования нужен некий консольный эмулятор, который просто открывает TCP соединение и отдает и принимает регистры.
-Вообще его реализация довольно простая.
+Для полноценного тестирования можно использовать простой консольный эмулятор, который открывает TCP-соединение, принимает и возвращает массив регистров. Реализация такого эмулятора достаточно проста: по сути это TCP-сервер с минимальной логикой обработки Modbus-запросов. Однако на начальном этапе можно обойтись и без него.
 
-Но можно обойтись без него.
-
-если вы знаете какие  вас регистры и что вы должны получить то можно написать подобный тест:
+Чтение регистров вполне реально протестировать изолированно. Если заранее известно, какие значения лежат в регистрах и какие данные должны получиться после преобразования, можно сформировать тестовый массив UInt16[] и проверить корректность маппинга регистров в типизированные переменные.
 
 > NOTE
-> код очень длинный из-за больших массивов, поэтому я опишу только его основные части
+> Код получается довольно объёмным из-за больших массивов, поэтому ниже приведены только ключевые части.
 
-```csharp
+```cs
+    private readonly UInt16[] allRegs =
+[
+    1,   // [0] адрес 10 - DevType.VFU = 1 (читается ReadHeader)
+    11,  // [1] адрес 11 - Version = 11 (читается ReadHeader)
+    1,   // [2] адрес 12 - BoolVar = true
+    13,  // [3] адрес 13 - ByteVar = 13
 
+    // TODO остальные простые типы
+
+    (UInt16)'H', // [33] адрес 43
+    (UInt16)'e', // [34] адрес 44
+    (UInt16)'l', // [35] адрес 45
+    (UInt16)'l', // [36] адрес 46
+    (UInt16)'o', // [37] адрес 47
+
+    // TODO остальные сложные типы
+];
+
+    private readonly PlcValue[] templates =
+{
+    new PlcValue("BoolVar", typeof(bool), 12),
+    new PlcValue("ByteVar", typeof(byte), 13),
+
+    // TODO остальные типы
+};
+
+[Fact]
+public void Test_RegsToPlcValues()
+{
+    // Arrange
+    MBReader reader = new(null, null!);
+
+    // Act
+    MBDataScheme result = reader.RegsToPlcValues(allRegs, templates);
+
+    // Assert - проверка заголовка
+    Assert.NotNull(result);
+    Assert.NotNull(result.Header);
+    Assert.Equal(expectedHeader.DevType, result.Header.DevType);
+    Assert.Equal(expectedHeader.Version, result.Header.Version);
+
+    // Assert - проверка количества переменных
+    Assert.NotNull(result.PlcValues);
+    Assert.Equal(templates.Length, result.PlcValues.Length);
+
+    // Assert - проверка значений переменных
+    // BoolVar (адрес 12, индекс в массиве 2)
+    Assert.Equal(true, result.PlcValues[0].Value);
+    Assert.Equal("BoolVar", result.PlcValues[0].Name);
+    Assert.Equal(typeof(bool), result.PlcValues[0].CSType);
+
+    // ByteVar (адрес 13, индекс в массиве 3)
+    Assert.Equal((byte)13, result.PlcValues[1].Value);
+    Assert.Equal("ByteVar", result.PlcValues[1].Name);
+
+    // UInt16Var (адрес 14, индекс в массиве 4)
+    Assert.Equal((ushort)2, result.PlcValues[2].Value);
+    Assert.Equal("UInt16Var", result.PlcValues[2].Name);
+
+    // TODO остальные типы
+}
 ```
+
+Такой подход позволяет проверить корректность преобразования регистров в значения ПЛК, правильность расчёта адресов и соответствие типов — без реального сетевого соединения.
+
+А вот запись без эмулятора протестировать полноценно не получится, потому что необходимо убедиться, что данные действительно отправляются и корректно принимаются другой стороной. Для полного тестирования — сначала запись, затем чтение (по сути e2e-сценарий) — требуется эмулятор или реальное устройство, которое будет играть роль ПЛК.
 
 ## Запись данных
 
