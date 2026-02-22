@@ -192,7 +192,7 @@ public class ModbusVariable<T> : IModbusVariable
 
 **Простые типы** — это базовые скалярные типы ПЛК: `BOOL`, `BYTE`, `WORD`, `DWORD`, `LWORD`, `SINT`, `INT`, `DINT`, `LINT`, `USINT`, `UINT`, `UDINT`, `ULINT`, `REAL`, `LREAL`. Работа с ними прямолинейна: Modbus оперирует 16-битными регистрами (UInt16), поэтому если тип в C# занимает меньше 2 байт, он всё равно размещается в одном полном регистре — уплотнять несколько переменных в один регистр не стоит. Если тип больше 2 байт, просто используется столько регистров, сколько требуется для его размера. В целом правило простое: размер типа в байтах делится на 2 и округляется вверх до количества регистров.
 
-**Сложные типы:** — это `TIME`, `DATE`, `TOD`, `DT`, `STRING`, `STRUCT`, `ARRAY`. С ними уже нет единственно очевидной стратегии, и приходится принимать архитектурные решения.
+**Сложные типы** — это `TIME`, `DATE`, `TOD`, `DT`, `STRING`, `STRUCT`, `ARRAY`. С ними уже нет единственно очевидной стратегии, и приходится принимать архитектурные решения.
 
 Типы времени (`TIME`, `DATE`, `TOD`, `DT`) в C# напрямую не соответствуют типам ПЛК. В .NET фактически используются два базовых типа: `DateTime` и `TimeSpan`. `TIME` удобно сопоставлять с `TimeSpan`, учитывая, что в ПЛК он хранится как количество миллисекунд — при чтении выполняется преобразование миллисекунд в `TimeSpan`, при записи — обратная конвертация. `DATE` представляет дату без времени (формат вида `YYYYMMDD`), а `TOD` — время без даты (`HHMMSS`); для них можно использовать либо `DateTime` с фиксированной датой, либо `TimeSpan` — в зависимости от выбранной модели. `DT` обычно маппится на `DateTime`.
 
@@ -207,38 +207,229 @@ public enum DevType : UInt16
 }
 ```
 
-**Массивы:** требуют явного указания длины — без фиксированного размера корректно работать с ними невозможно. Количество регистров для массива определяется как произведение размера элемента на длину массива.
+**Массивы** требуют явного указания длины — без фиксированного размера корректно работать с ними невозможно. Количество регистров для массива определяется как произведение размера элемента на длину массива.
 
 Отдельно остаются структуры (`STRUCT`) — с ними стратегия работы зависит от договорённости о порядке полей и выравнивании, и этот вопрос требует отдельного проектного решения.
 
 ### Реализация маршаллера
 
-Класс маршаллера предоставляет два основных метода:
+Класс маршаллера отвечает за двустороннее преобразование данных между 16-битными регистрами Modbus (`UInt16[]`) и типами C#. Его задача — полностью изолировать логику упаковки и распаковки регистров, чтобы остальной код оперировал привычными C#-типами и не задумывался о битовых сдвигах и порядке байтов.
 
-1. Marshal — преобразование из регистров в C# типы
-
-```csharp
-UInt16[] raw = { 0x1234, 0x5678 };
-object? value = ModbusValueMarshaler.Marshal(raw, typeof(UInt32));
-// Результат: 0x12345678
-```
-
-**Поддерживаемые типы:**
-
-- Примитивные типы: `bool`, `byte`, `sbyte`, `UInt16`, `Int16`, `UInt32`, `Int32`, `UInt64`, `Int64`
-- Числа с плавающей точкой: `float`, `double`
-- Специальные типы: `TimeSpan` (миллисекунды), `DateTime` (Unix timestamp в секундах)
-- Строки: первый регистр — длина, остальные — символы
-- Массивы: преобразование каждого элемента
-- Enum: преобразование через базовый тип
-
-2. Unmarshal — преобразование из C# типов в регистры
+Базовая сигнатура выглядит так:
 
 ```csharp
-float value = 25.5f;
-UInt16[] regs = ModbusValueMarshaler.Unmarshal(value, typeof(float));
-// Результат: массив из 2 регистров с битовым представлением float
+public static object Marshal(UInt16[] raw, Type targetType)
 ```
+
+Метод проверяет входные параметры, после чего по `targetType` выбирает стратегию преобразования. Для простых однорегистровых типов (`bool`, `byte`, `sbyte`, `UInt16`, `Int16`) используется прямое приведение из `raw[0]`. Для 32-битных типов (`UInt32`, `Int32`) объединяются два регистра через сдвиг старшего слова на 16 бит. Для 64-битных типов (`UInt64`, `Int64`) объединяются уже четыре регистра.
+
+```csharp
+// Простые типы (однорегистровые)
+if (targetType == typeof(bool)) return raw[0] != 0;
+if (targetType == typeof(byte)) return (byte)raw[0];
+if (targetType == typeof(UInt16)) return raw[0];
+if (targetType == typeof(Int16)) return (Int16)raw[0];
+if (targetType == typeof(sbyte)) return (sbyte)raw[0];
+
+// 32-битные типы
+if (targetType == typeof(UInt32))
+{
+    if (raw.Length < 2)
+        throw new ArgumentException("недостаточно регистров для UInt32");
+
+    return ((UInt32)raw[0] << 16) | raw[1];
+}
+
+if (targetType == typeof(Int32))
+{
+    if (raw.Length < 2)
+        throw new ArgumentException("недостаточно регистров для Int32");
+
+    return (Int32)(((UInt32)raw[0] << 16) | raw[1]);
+}
+
+// 64-битные типы
+if (targetType == typeof(UInt64))
+{
+    if (raw.Length < 4)
+        throw new ArgumentException("недостаточно регистров для UInt64");
+
+    return ((UInt64)raw[0] << 48) |
+           ((UInt64)raw[1] << 32) |
+           ((UInt64)raw[2] << 16) |
+           raw[3];
+}
+
+if (targetType == typeof(Int64))
+{
+    if (raw.Length < 4)
+        throw new ArgumentException("недостаточно регистров для Int64");
+
+    UInt64 value =
+        ((UInt64)raw[0] << 48) |
+        ((UInt64)raw[1] << 32) |
+        ((UInt64)raw[2] << 16) |
+        raw[3];
+
+    return (Int64)value;
+}
+```
+
+Числа с плавающей точкой (`float`, `double`) сначала собираются в целочисленное представление (`UInt32`/`UInt64`), после чего преобразуются через `BitConverter.Int32BitsToSingle` и `BitConverter.Int64BitsToDouble`.
+
+```csharp
+// Числа с плавающей точкой
+if (targetType == typeof(float))
+{
+    if (raw.Length < 2)
+        throw new ArgumentException("недостаточно регистров для float");
+
+    UInt32 bits = ((UInt32)raw[0] << 16) | raw[1];
+    return BitConverter.Int32BitsToSingle((Int32)bits);
+}
+
+if (targetType == typeof(double))
+{
+    if (raw.Length < 4)
+        throw new ArgumentException("недостаточно регистров для double");
+
+    UInt64 bits =
+        ((UInt64)raw[0] << 48) |
+        ((UInt64)raw[1] << 32) |
+        ((UInt64)raw[2] << 16) |
+        raw[3];
+
+    return BitConverter.Int64BitsToDouble((Int64)bits);
+}
+```
+
+Специальные типы интерпретируются по договорённости: `TimeSpan` — как количество миллисекунд в 32 битах, `DateTime` — как количество секунд от `UnixEpoch`. Строка читается по схеме «первый регистр — длина, далее символы». Массивы обрабатываются в зависимости от типа элемента: для `UInt16[]` возвращается исходный массив, для остальных создаётся новый массив с приведением каждого элемента. Для `enum` сейчас возвращается числовое значение регистра (при необходимости можно восстановить `enum` через базовый тип).
+
+```csharp
+// Специальные типы
+if (targetType == typeof(TimeSpan))
+{
+    if (raw.Length < 2)
+        throw new ArgumentException("недостаточно регистров для TimeSpan");
+    UInt32 milliseconds = ((UInt32)raw[0] << 16) | raw[1];
+    return TimeSpan.FromMilliseconds(milliseconds);
+}
+if (targetType == typeof(DateTime))
+{
+    if (raw.Length < 2)
+        throw new ArgumentException("недостаточно регистров для DateTime");
+    UInt32 seconds = ((UInt32)raw[0] << 16) | raw[1];
+    return DateTime.UnixEpoch.AddSeconds(seconds);
+}
+if (targetType == typeof(string))
+{
+    int length = raw[0];
+    if (length <= 0 || raw.Length < length + 1)
+        return string.Empty;
+    char[] chars = new char[length];
+    for (int i = 0; i < length; i++)
+        chars[i] = (char)raw[i + 1];
+    return new string(chars);
+}
+if (targetType.IsArray)
+{
+    Type elementType = targetType.GetElementType()!;
+    if (elementType == typeof(UInt16))
+        return raw;
+    Array result = Array.CreateInstance(elementType, raw.Length);
+    for (int i = 0; i < raw.Length; i++)
+    {
+        result.SetValue(Convert.ChangeType(raw[i], elementType), i);
+    }
+    return result;
+}
+
+if (targetType.IsEnum || targetType == typeof(Enum))
+{
+    return raw[0];
+}
+```
+
+Обратное преобразование выполняет метод:
+
+```csharp
+public static UInt16[] Unmarshal(object? value, Type? targetType)
+```
+
+Логика симметрична `Marshal`:
+
+- однорегистровые типы возвращаются как массив из одного `UInt16`;
+- 32-битные и 64-битные типы разбиваются на 2 или 4 регистра с помощью побитовых сдвигов;
+- `float` и `double` сначала переводятся в битовое представление через `BitConverter`, затем режутся на 16-битные части;
+- `TimeSpan`сериализуется как количество миллисекунд, `DateTime` — как количество секунд от `UnixEpoch`;
+- для массивов рассчитывается количество регистров на элемент и формируется итоговый буфер;
+- `enum` приводится к базовому целочисленному типу и записывается в один регистр.
+
+Дополнительно реализован вспомогательный метод `ConvertToType<T>`, который аккуратно приводит входное значение к нужному типу, включая поддержку конвертации из строк с использованием `InvariantCulture`. Это позволяет безопасно сериализовать данные, полученные, например, из UI или конфигурационных файлов.
+
+```csharp
+private static T ConvertToType<T>(object value)
+{
+    if (value is T directValue)
+        return directValue;
+
+    if (value is string strValue)
+    {
+        // Пытаемся конвертировать строку в нужный тип
+        var targetType = typeof(T);
+
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        const System.Globalization.NumberStyles numStyle = System.Globalization.NumberStyles.Any;
+
+        if (targetType == typeof(bool))
+        {
+            if (bool.TryParse(strValue, out bool b))
+                return (T)(object)b;
+            if (int.TryParse(strValue, numStyle, inv, out int i))
+                return (T)(object)(i != 0);
+            throw new ArgumentException($"не удалось конвертировать строку \"{strValue}\" в тип {targetType.Name}");
+        }
+
+        if (targetType == typeof(TimeSpan))
+        {
+            if (TimeSpan.TryParse(strValue, inv, out TimeSpan ts))
+                return (T)(object)ts;
+            throw new ArgumentException($"не удалось конвертировать строку \"{strValue}\" в тип {targetType.Name}");
+        }
+
+        if (targetType == typeof(DateTime))
+        {
+            // Для строк без таймзоны считаем, что это UTC (чтобы не было сдвига на локальный TZ)
+            const System.Globalization.DateTimeStyles dtStyle =
+                System.Globalization.DateTimeStyles.AssumeUniversal |
+                System.Globalization.DateTimeStyles.AdjustToUniversal;
+
+            if (DateTime.TryParse(strValue, inv, dtStyle, out DateTime dt))
+                return (T)(object)dt;
+            throw new ArgumentException($"не удалось конвертировать строку \"{strValue}\" в тип {targetType.Name}");
+        }
+
+        // Числовые типы
+        if (targetType == typeof(byte) && byte.TryParse(strValue, numStyle, inv, out byte u8)) return (T)(object)u8;
+        if (targetType == typeof(sbyte) && sbyte.TryParse(strValue, numStyle, inv, out sbyte i8)) return (T)(object)i8;
+        if (targetType == typeof(UInt16) && UInt16.TryParse(strValue, numStyle, inv, out UInt16 u16)) return (T)(object)u16;
+        if (targetType == typeof(Int16) && Int16.TryParse(strValue, numStyle, inv, out Int16 i16)) return (T)(object)i16;
+        if (targetType == typeof(UInt32) && UInt32.TryParse(strValue, numStyle, inv, out UInt32 u32)) return (T)(object)u32;
+        if (targetType == typeof(Int32) && Int32.TryParse(strValue, numStyle, inv, out Int32 i32)) return (T)(object)i32;
+        if (targetType == typeof(UInt64) && UInt64.TryParse(strValue, numStyle, inv, out UInt64 u64)) return (T)(object)u64;
+        if (targetType == typeof(Int64) && Int64.TryParse(strValue, numStyle, inv, out Int64 i64)) return (T)(object)i64;
+        if (targetType == typeof(float) && float.TryParse(strValue, numStyle, inv, out float f)) return (T)(object)f;
+        if (targetType == typeof(double) && double.TryParse(strValue, numStyle, inv, out double d)) return (T)(object)d;
+
+        throw new ArgumentException($"не удалось конвертировать строку \"{strValue}\" в тип {targetType.Name}");
+    }
+
+    // Пытаемся использовать стандартную конвертацию
+    return (T)Convert.ChangeType(value, typeof(T), System.Globalization.CultureInfo.InvariantCulture);
+}
+```
+
+Таким образом, маршаллер инкапсулирует всю логику преобразования типов, обеспечивая единый и предсказуемый механизм работы с данными при чтении и записи через Modbus.
 
 ## Чтение данных
 
