@@ -253,13 +253,13 @@ public enum DevType : UInt16
 
 Базовая сигнатура выглядит так:
 
-```csharp
+```cs
 public static object Marshal(UInt16[] raw, Type targetType)
 ```
 
 Метод проверяет входные параметры, после чего по `targetType` выбирает стратегию преобразования. Для простых однорегистровых типов (`bool`, `byte`, `sbyte`, `UInt16`, `Int16`) используется прямое приведение из `raw[0]`. Для 32-битных типов (`UInt32`, `Int32`) объединяются два регистра через сдвиг старшего слова на 16 бит. Для 64-битных типов (`UInt64`, `Int64`) объединяются уже четыре регистра.
 
-```csharp
+```cs
 // Простые типы (однорегистровые)
 if (targetType == typeof(bool)) return raw[0] != 0;
 if (targetType == typeof(byte)) return (byte)raw[0];
@@ -313,7 +313,7 @@ if (targetType == typeof(Int64))
 
 Числа с плавающей точкой (`float`, `double`) сначала собираются в целочисленное представление (`UInt32`/`UInt64`), после чего преобразуются через `BitConverter.Int32BitsToSingle` и `BitConverter.Int64BitsToDouble`.
 
-```csharp
+```cs
 // Числа с плавающей точкой
 if (targetType == typeof(float))
 {
@@ -341,7 +341,7 @@ if (targetType == typeof(double))
 
 Специальные типы интерпретируются по договорённости: `TimeSpan` — как количество миллисекунд в 32-битах, `DateTime` — как количество секунд от `UnixEpoch`. Строка читается по схеме «первый регистр — длина, далее символы». Массивы обрабатываются в зависимости от типа элемента: для `UInt16[]` возвращается исходный массив, для остальных создаётся новый массив с приведением каждого элемента. Для `enum` сейчас возвращается числовое значение регистра (при необходимости можно восстановить `enum` через базовый тип).
 
-```csharp
+```cs
 // Специальные типы
 if (targetType == typeof(TimeSpan))
 {
@@ -388,7 +388,7 @@ if (targetType.IsEnum || targetType == typeof(Enum))
 
 Обратное преобразование выполняет метод:
 
-```csharp
+```cs
 public static UInt16[] Unmarshal(object? value, Type? targetType)
 ```
 
@@ -403,7 +403,7 @@ public static UInt16[] Unmarshal(object? value, Type? targetType)
 
 Дополнительно реализован вспомогательный метод `ConvertToType<T>`, который аккуратно приводит входное значение к нужному типу, включая поддержку конвертации из строк с использованием `InvariantCulture`. Это позволяет безопасно сериализовать данные, полученные, например, из UI или конфигурационных файлов.
 
-```csharp
+```cs
 private static T ConvertToType<T>(object value)
 {
     if (value is T directValue)
@@ -554,7 +554,7 @@ public PlcValue[] ReadValues(byte slaveId)
 
 **Пример использования:**
 
-```csharp
+```cs
 MBReader reader = new MBReader(master, varMap);
 MBDataScheme data = reader.ReadAll(slaveId: 1);
 
@@ -704,7 +704,7 @@ public void Test_RegsToPlcValues()
 - Modbus-сервер доступен;
 - устройство корректно обрабатывает запросы.
 
-```csharp
+```cs
 try
 {
     // Минимальный Modbus-запрос (heartbeat)
@@ -730,7 +730,7 @@ catch
 
 Возможен также контроль на уровне TCP-сокета:
 
-```csharp
+```cs
 private bool IsConnected()
 {
     if (_client?.Client == null)
@@ -764,7 +764,7 @@ private bool IsConnected()
 
 Пример использования:
 
-```csharp
+```cs
 var reconnectionTask = new ModbusReconnectionTask(
     ipAddress: "192.168.1.100",
     port: 502,
