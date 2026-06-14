@@ -1,11 +1,12 @@
 # Java для Sega Mega Drive — возможно ли это?
 
 <!-- markdownlint-disable MD033 -->
+<!-- markdownlint-disable MD045 -->
 
 <p align="center" class="anim-fade-in">
   <picture>
     <source srcset="./images/ArticlLogo.png">
-    <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Java-for-sega-genesis/images/ArticlLogo.png" alt="Logo" width="100%" height="auto">
+    <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Java-for-sega-genesis/images/ArticlLogo.png">
   </picture>
 </p>
 

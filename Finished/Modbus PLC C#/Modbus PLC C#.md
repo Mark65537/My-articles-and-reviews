@@ -1,8 +1,11 @@
 # Чтение и запись переменных из ПЛК по Modbus в C#-приложении
 
+<!-- markdownlint-disable MD033 -->
+<!-- markdownlint-disable MD045 -->
+
 <picture>
   <source srcset="./images/Logo.png">
-  <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Java-for-sega-genesis/images/Logo.png" alt="Logo" width="100%" height="auto">
+  <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Modbus%20PLC%20C%23/images/Logo.png" alt="Logo">
 </picture>
 
 ## Введение
