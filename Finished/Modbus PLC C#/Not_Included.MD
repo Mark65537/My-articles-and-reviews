@@ -549,6 +549,18 @@ public IModbusVariable CreateNew(object value)
 так же нет ни одной нормальной программы для тестирования, чтоб можно было проверить работы твоей программы.
 непонятно как с этим работать в CODESYS, там вроде есть подходящии устройства но как будто функционал обрезан.
 
+### EtherCAT
+
+Контроллер поддерживает EtherCAT.
+
+Однако, “читать произвольные переменные PLC через EtherCAT” — не так просто, если это не EtherCAT I/O-устройства. Для обмена данными через EtherCAT понадобятся:
+
+Мастер EtherCAT на стороне ПК (то есть ваша C# программа должна выполнять роль мастера EtherCAT), либо использовать существующий EtherCAT мастер, который поддерживает обмен с контроллером HCFA.
+
+Библиотека EtherCAT для C#. К сожалению, открытых и зрелых чисто C# EtherCAT-мастер библиотек немного — часто EtherCAT-мастера реализованы на C/C++ и требуют обёрток или interop.
+
+Этот путь — самый сложный и дорогой в плане разработки, если ваша цель просто “прочитать PLC переменные”, так как EtherCAT обычно используется для синхронного обмена для I/O, движения и т.п.
+
 ### MQTT
 
 непонятно как с этим работать в CODESYS, там вроде есть подходящая библиотека, но к ней нет внятной документации.
@@ -1531,6 +1543,169 @@ ctor(MBSettings settings, object _varmap, Reader или Writer)
 Надеюсь, данная статья кому-нибудь поможет.
 
 Есть еще куча материала, которая не вошла в статью, вы можете ее посмотреть по ссылке
+
+## Улучшения
+
+### Шаблон Посетитель
+
+Да, **Visitor можно использовать**, но важно понимать его сильную сторону:
+
+- **Visitor отлично убирает `if/switch`, когда вы хотите добавлять *новые операции* над уже фиксированным набором типов** (например: сериализация в Modbus, форматирование для UI, валидация диапазонов, логирование, генерация `ST`-структур и т.д.).
+- Если ваша цель — **“легко добавлять *новые типы* и при этом *не менять* существующую бизнес‑логику”**, то **классический Visitor как раз неудобен**: при добавлении нового типа вам придётся расширять интерфейс посетителя и обновлять все реализации.
+
+Ниже два конкретных варианта (оба убирают “лес” `if`, как у вас сейчас в `ModbusValueMarshaler`).
+
+### Вариант A — Visitor (когда типы фиксированы, а операций будет много)
+
+Идея: вместо `Type targetType` вы храните “описатель типа” как объект из иерархии (`BoolType`, `U16Type`, `F32Type`, …), и операции оформляете как посетителей.
+
+#### 1) Модель типов + `Accept`
+
+```csharp
+public interface IPlcType
+{
+    T Accept<T>(IPlcTypeVisitor<T> visitor);
+}
+
+public interface IPlcTypeVisitor<T>
+{
+    T VisitBool();
+    T VisitU16();
+    T VisitI16();
+    T VisitU32();
+    T VisitI32();
+    T VisitF32();
+    T VisitU64();
+    T VisitI64();
+    T VisitF64();
+    T VisitString(int regSize);
+    // и т.д. (TimeSpan/DateTime/массивы/enum — как вам нужно)
+}
+
+public sealed class BoolType : IPlcType { public T Accept<T>(IPlcTypeVisitor<T> v) => v.VisitBool(); }
+public sealed class U16Type  : IPlcType { public T Accept<T>(IPlcTypeVisitor<T> v) => v.VisitU16(); }
+// ...
+public sealed class StringType : IPlcType
+{
+    public int RegSize { get; }
+    public StringType(int regSize) => RegSize = regSize;
+    public T Accept<T>(IPlcTypeVisitor<T> v) => v.VisitString(RegSize);
+}
+```
+
+#### 2) Посетитель “Marshal” (из регистров → значение)
+
+```csharp
+public sealed class MarshalVisitor : IPlcTypeVisitor<object>
+{
+    private readonly ushort[] _raw;
+    public MarshalVisitor(ushort[] raw) => _raw = raw;
+
+    public object VisitBool() => _raw[0] != 0;
+    public object VisitU16()  => _raw[0];
+    public object VisitI16()  => (short)_raw[0];
+
+    public object VisitU32()
+        => ((uint)_raw[0] << 16) | _raw[1];
+
+    public object VisitF32()
+    {
+        uint bits = ((uint)_raw[0] << 16) | _raw[1];
+        return BitConverter.Int32BitsToSingle((int)bits);
+    }
+
+    public object VisitString(int regSize)
+    {
+        int length = _raw[0];
+        int n = Math.Min(length, regSize - 1);
+        var chars = new char[n];
+        for (int i = 0; i < n; i++) chars[i] = (char)_raw[i + 1];
+        return new string(chars);
+    }
+
+    // ... остальное аналогично
+}
+```
+
+Использование:
+
+```csharp
+object value = plcType.Accept(new MarshalVisitor(rawRegs));
+```
+
+**Плюс:** вы убрали `if` и можете добавлять новые операции (например `FormatForUiVisitor`, `ValidateVisitor`) без изменения классов типов.  
+**Минус:** добавление *нового типа* потребует добавить `VisitNewType()` во *всех* посетителей.
+
+---
+
+## Вариант B — Реестр обработчиков (лучше, если вы хотите легко добавлять *новые типы*)
+
+Это обычно более “расширяемо по типам”, чем Visitor: **добавили новый обработчик — бизнес‑код не трогаете**.
+
+### 1) Контракт “кодека” (тип ↔ регистры)
+
+```csharp
+public interface IModbusCodec
+{
+    bool CanHandle(Type t);
+    object Marshal(ushort[] raw, Type t);
+    ushort[] Unmarshal(object value, Type t, int? regSize = null);
+}
+```
+
+### 2) Пример кодека для `UInt32`
+
+```csharp
+public sealed class U32Codec : IModbusCodec
+{
+    public bool CanHandle(Type t) => t == typeof(uint);
+
+    public object Marshal(ushort[] raw, Type t)
+        => ((uint)raw[0] << 16) | raw[1];
+
+    public ushort[] Unmarshal(object value, Type t, int? regSize = null)
+    {
+        uint v = Convert.ToUInt32(value, System.Globalization.CultureInfo.InvariantCulture);
+        return new[] { (ushort)(v >> 16), (ushort)(v & 0xFFFF) };
+    }
+}
+```
+
+### 3) Реестр и вызов без `if/switch`
+
+```csharp
+public sealed class ModbusCodecRegistry
+{
+    private readonly List<IModbusCodec> _codecs;
+
+    public ModbusCodecRegistry(IEnumerable<IModbusCodec> codecs)
+        => _codecs = codecs.ToList();
+
+    public object Marshal(ushort[] raw, Type t)
+        => _codecs.First(c => c.CanHandle(t)).Marshal(raw, t);
+
+    public ushort[] Unmarshal(object value, Type t, int? regSize = null)
+        => _codecs.First(c => c.CanHandle(t)).Unmarshal(value, t, regSize);
+}
+```
+
+Добавить новый тип = **добавить новый `…Codec` класс** и зарегистрировать его — остальной код не меняется.
+
+### Что выбрать в вашем проекте (по смыслу вопроса)
+
+- Если вы хотите “**убрать `if` и потом добавлять новые типы, не меняя бизнес‑логику**” — чаще всего берут **реестр обработчиков (Strategy + Registry)**, а не Visitor.
+- Visitor имеет смысл, если у вас **набор типов стабилен**, но вы заранее ожидаете **много разных операций** над ними (и эти операции будут расти).
+
+Если скажете, **какие именно “типы” вы имеете в виду** (C# `Type` как сейчас: `bool/int/float/string/arrays/enum` или ваши доменные “типы переменных” вроде `HoldingRegister/Coil/InputRegister`), я покажу пример прямо под вашу модель (`PlcValue`, `RegSize`, строки, массивы, enum) и как это безболезненно встроить в текущий `ModbusValueMarshaler` (без переписывания всего проекта).
+
+Да, теоретически можно, но шаблон “Посетитель” (Visitor) чаще подходит для другой задачи: когда вы добавляете новые операции над уже существующими типами, не меняя классы элементов.
+
+В вашем случае вы хотите обрабатывать разные типы переменных и легко добавлять новые типы, почти не меняя бизнес-логику. С Visitor обычно неудобно именно добавлять новые типы элементов: придётся расширять интерфейс посетителя (добавить VisitX), а дальше обновлять реализацию у существующих посетителей.
+
+Практичнее для вашей цели обычно:
+
+Strategy/handlers: отдельный обработчик на каждый тип (ITypeHandler), регистрируется по типу/ключу;
+или полиморфизм: у каждого типа своя реализация общей операции.
 
 ## Нерешенные вопросы
 
