@@ -1,11 +1,11 @@
-# Как я менял местами персонажей UMK3
+# Как я менял местами персонажей UMK3 на Sega Mega Drive
 
 <!-- markdownlint-disable MD033 -->
 <!-- markdownlint-disable MD045 -->
 
 <picture>
   <source srcset="./images/Logo.png">
-  <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Behind%20the%20Code/Ultimate%20Mortal%20kombat%203%20SMD/images/Logo.png" alt="Logo">
+  <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Behind%20the%20Code/Ultimate%20Mortal%20kombat%203%20SMD/images/Logo.png">
 </picture>
 
 В этой статье я подробно разбираю последовательные шаги, которые предпринимал для замены персонажей и их портретов в **Ultimate Mortal Kombat 3** на Sega Genesis. Я не профессионал в реверс-инжиниринге и не претендую на исчерпывающую техническую документацию. Напротив, я намеренно оставляю в материале ложные пути и тупиковые ветки исследования — чтобы вы видели реальный процесс поиска, со всеми ошибками и неожиданными поворотами, а не только гладкий финальный результат. Надеюсь эта статья поможет тем кто незнает с чего начать в решении подобной задачи.
@@ -21,7 +21,7 @@
 ## Попытка поменять персонажа
 
 > [!NOTE]
-> На момент подготовки статьи в DataCrystal имелась лишь одна подкатегория — RAM Map, поэтому другие разделы, особенно [Tutorial](https://datacrystal.tcrf.net/wiki/Ultimate_Mortal_Kombat_3_(Genesis)/Tutorials), я не использовал.
+> На момент подготовки статьи в [DataCrystal](https://datacrystal.tcrf.net/wiki/Data_Crystal) имелась лишь одна подкатегория — [RAM map](https://datacrystal.tcrf.net/wiki/Ultimate_Mortal_Kombat_3_(Genesis)/RAM_map), поэтому другие разделы, особенно [Tutorial](https://datacrystal.tcrf.net/wiki/Ultimate_Mortal_Kombat_3_(Genesis)/Tutorials), я не использовал.
 
 Для начала решил изучить уже известные адреса в игре. Зашел на [датакристал](https://datacrystal.tcrf.net/wiki/Ultimate_Mortal_Kombat_3_(Genesis)), обнаружил, что у данной игры была только одна подкатегория [RAM map](https://datacrystal.tcrf.net/wiki/Ultimate_Mortal_Kombat_3_(Genesis)/RAM_map). В ней нашёл интересное значение по адресу `126`, где хранится информация о текущем выбранном персонаже.
 
@@ -55,19 +55,31 @@ P1 Character:
 
 Сначала я решил попытаться испытать удачу и найти эту последовательность напрямую. Для этого я взял изображение с выбором персонажей и составил последовательность, предполагая, что она будет идти слева направо сверху вниз.
 
-![PlayerSelect](images/PlayerSelect.png)
+<picture>
+  <source srcset="./images/PlayerSelect.png">
+  <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Behind%20the%20Code/Ultimate%20Mortal%20kombat%203%20SMD/images/PlayerSelect.png" alt="PlayerSelect">
+</picture>
 
 Я взял значение первых 3-х персонажей(`18 13 05`) и попытался их найти. Ожидаемо, безуспешно. Тогда решил проверить вариант с 16-битными значениями, предположив, что каждому бойцу выделено по два байта. Поиск по последовательности `00 18 00 13 00 05` дал результат — единственное совпадение по адресу `DFC8`.
 
-![SearchResult](images/SearchResult.png)
+<picture>
+  <source srcset="./images/SearchResult.png">
+  <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Behind%20the%20Code/Ultimate%20Mortal%20kombat%203%20SMD/images/SearchResult.png" alt="SearchResult">
+</picture>
 
 Посмотрел дальше, и вся остальная последовательность совпадает. Для теста попробовал поменять **Rain** на **Shao Khan** (`1B`), и оказалось, что где-то еще лежат дефолтные значения для первого и второго персонажей, так как чтобы изменения вступили в силу, нужно сначала переключиться на другого персонажа, а потом снова перейти на предыдущего.
 
-![ChangeResult](images/ChangeResult.gif)
+<picture>
+  <source srcset="./images/ChangeResult.gif">
+  <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Behind%20the%20Code/Ultimate%20Mortal%20kombat%203%20SMD/images/ChangeResult.gif" alt="ChangeResult">
+</picture>
 
-Чтобы не тратить время на поиск нужных значений, учитывая, что в роме их 2234 и 920 соответственно, я решил взять какой-нибудь хак, в котором эти значения изменены. Затем я сравнил изменённый файл с оригинальным с помощью **WinMerge** и нашёл нужные места. Для этого я выбрал `Ultimate Mortal Kombat 3 - Arcade Hack v0.6 by Nemesis_c`
+Чтобы не тратить время на поиск дефолтных значений, учитывая, что в роме их 2234 и 920 соответственно, я решил взять какой-нибудь хак, в котором эти значения изменены. Затем я сравнил хак с оригинальной игрой с помощью **WinMerge**, чтобы определить, какие области ROM подверглись изменениям. Для этого я выбрал `Ultimate Mortal Kombat 3 - Arcade Hack v0.6 by Nemesis_c`
 
-![PlayerSelectUMK3AH](images/PlayerSelectUMK3AH.png)
+<picture>
+  <source srcset="./images/PlayerSelectUMK3AH.png">
+  <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Behind%20the%20Code/Ultimate%20Mortal%20kombat%203%20SMD/images/PlayerSelectUMK3AH.png" alt="PlayerSelectUMK3AH">
+</picture>
 
 Изучив отличия, я обнаружил, что изменения касаются адресов `D43E` и `D446`. Если хотите изменить начальных персонажей, нужно редактировать эти значения.
 
@@ -76,13 +88,19 @@ P1 Character:
 В отличие от замены списка бойцов, замена портрета — более сложная задача, так как нужно знать, как строится графика на экране выбора персонажа. Так как раньше я не изучал **Ultimate Mortal Kombat 3**, решил собрать любую доступную информацию — игра популярная, значит, кто-то уже наверняка пытался исследовать её устройство.
 Для начала открыл РОМ в [BizHawk](https://tasvideos.org/Bizhawk), чтобы определить, как именно отображаются портреты: это спрайты, фон или, возможно, window(так обычно в играх не делают, но мало ли). Анализ показал, что экран выбора делится на два слоя — **A** и **B**, так обычно делают, чтобы можно было использовать больше цветов.
 
-![VDPviewer](images/VDPviewer.png)
+<picture>
+  <source srcset="./images/VDPviewer.png">
+  <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Behind%20the%20Code/Ultimate%20Mortal%20kombat%203%20SMD/images/VDPviewer.png" alt="VDPviewer">
+</picture>
 
 Таким образом, портреты оказались частью фона, и следующим шагом было выяснить, хранятся ли они отдельно или объединены в одно изображение.
 Попытка найти сырые данные тайлсета ничего не дала — неудивительно, ведь объём игры всего **4 МБ**, и все персонажи не могли бы поместиться без компрессии.
 Тогда я обратился к форуму [Emu-Land](https://www.emu-land.net/forum/index.php), так как там часто встречаются редкие технические сведения, которые нельзя найти на других ресурсах. Наткнулся на такую тему [Mortal Kombat 3 Ultimate Hack](https://www.emu-land.net/forum/index.php/topic,61289.0.html). В ней обсуждалось что можно изменить в игре. Быстро пошарив тему наткнулся на такой скриншот, иллюстрирующий внутреннюю структуру графики.
 
-![GraphStruct](images/GraphStruct.png)
+<picture>
+  <source srcset="./images/GraphStruct.png">
+  <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Behind%20the%20Code/Ultimate%20Mortal%20kombat%203%20SMD/images/GraphStruct.png" alt="GraphStruct">
+</picture>
 
 Данное место в роме находится по адресу `3ee3ba`. Это оказался скрин компании **Willem**, который показывается в начале игры. Я попробовал занулить пару значений тайловой карты, чтобы убедиться, что это точно скрин **Willem**, хорошо, что для его появления не нужно долго ждать и можно всё быстро проверить. После зануления и запуска игры, на экране **Willem** я получил ошибку.
 Так удалось понять принцип организации данных:
@@ -94,7 +112,10 @@ P1 Character:
 Следовательно, требовалось найти нужный **Refs** для экрана выбора бойцов. В процессе я заметил, что между **Refs** и **TileMap** присутствует большой блок нулей. Мне так до сих пор не удалось понять, зачем он нужен, ведь без него можно было бы сэкономить память, но это можно использовать при анализе.
 Далее я предположил, что, может, не все данные сжаты: возможно, палитры лежат в открытом виде. Из просмотрщика слоёв стало видно, что используются третья и четвёртая палитры — третья для слоя **B**, четвёртая для **A**.
 
-![PlayerSelectPalettes](images/PlayerSelectPalettes.png)
+<picture>
+  <source srcset="./images/PlayerSelectPalettes.png">
+  <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Behind%20the%20Code/Ultimate%20Mortal%20kombat%203%20SMD/images/PlayerSelectPalettes.png" alt="PlayerSelectPalettes">
+</picture>
 
 Я обнаружил их по адресам `5c40e` и `aa392`. Значит, палитры не зашифрованы, что упрощает задачу. Тогда я решил искать все участки, ссылающиеся на палитру слоя **B**, но это ничего не дало.
 
@@ -102,7 +123,10 @@ P1 Character:
 Начал с `5c40e`. Алгоритм поиска был такой: сначала переходил по адресу `5c40e`, а потом искал последовательность из 16 нулей(`00 00 00 00 00 00 00 00 00 00 00 00 00 00 00`) и смотрел, чтобы было похоже, как на скрине со структурой. Однако нужных совпадений не было. Тогда решил поискать рядом с другой палитрой(`aa392`). Это сразу же дало результат по адресу `aa732`, где значение `00 0a a3 b4` оказалось ссылкой на **TileSet**. Я перешел к нему и попробовал изменить байт по адресу `aa3c1` на `00`, так как до этого я заметил, что все **TileSet** и **TileMap** начинаются с `00 01` или `00 02`, что, по всей видимости, указывает на заголовок, изменять который нельзя — иначе игра выдает ошибку.
 Вот что в итоге получилось:
 
-![RainCorrupt](images/RainCorrupt.png)
+<picture>
+  <source srcset="./images/RainCorrupt.png">
+  <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Behind%20the%20Code/Ultimate%20Mortal%20kombat%203%20SMD/images/RainCorrupt.png" alt="RainCorrupt">
+</picture>
 
 Похоже, каждый портрет кодируется отдельно. Это хорошая новость, потому что, зная это, мы можем менять местами портреты персонажей, просто меняя их ссылки и размер.
 
@@ -111,63 +135,102 @@ P1 Character:
 Из предыдущего раздела стало ясно, что для замены существующих портретов местами нужно всего лишь поменять их ссылки и, при необходимости, размер.
 Вот например я поменял местами портрет **Джакса** на портрет **Рейна**:
 
-![SwapJaxRain](images/SwapJaxRain.png)
+<picture>
+  <source srcset="./images/SwapJaxRain.png">
+  <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Behind%20the%20Code/Ultimate%20Mortal%20kombat%203%20SMD/images/SwapJaxRain.png" alt="SwapJaxRain">
+</picture>
 
 ## Замена на свой портрет
 
 Чтобы продемонстрировать процесс на практике, я выбрал конкретный пример — замену портрета Noob Saibot на Human Smoke.
 
-![HSorigPortrait](images/HSorigPortrait.png)
+<picture>
+  <source srcset="./images/HSorigPortrait.png">
+  <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Behind%20the%20Code/Ultimate%20Mortal%20kombat%203%20SMD/images/HSorigPortrait.png" alt="HSorigPortrait">
+</picture>
 
 Этот выбор не случаен — портрет Noob Saibot самый простой, использует минимум цветов и тайлов.
 Для такой замены нам понадобится либо программа, способная выполнять сжатие и распаковку графики, либо самому узнать и реализовать данные алгоритмы.
-После изнурительных поисков мне всё-таки удалось найти подходящий инструмент на сайте [Chief-Net](http://chief-net.ru).ru — утилиту [Ultimate MK3 Codec](http://chief-net.ru/index.php?option=com_content&task=view&id=725&Itemid=73).
+После изнурительных поисков мне всё-таки удалось найти подходящий инструмент на сайте [Chief-Net.ru](http://chief-net.ru) — утилиту [Ultimate MK3 Codec](http://chief-net.ru/index.php?option=com_content&task=view&id=725&Itemid=73).
 
-![UMK3 Codec](images/umk3_codec.png)
+<picture>
+  <source srcset="./images/umk3_codec.png">
+  <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Behind%20the%20Code/Ultimate%20Mortal%20kombat%203%20SMD/images/umk3_codec.png" alt="umk3_codec">
+</picture>
 
 Принцип её работы прост: нужно указать адрес начала блока данных и выбрать одно из трёх действий — компрессия карты, компрессия тайлов, декомпрессия. В комплекте присутствует текстовый файл с пояснениями, но без глубокого описания как всё это работает, что для нашей задачи не критично.
 Так как замена касалась именно портрета, я решил использовать только слой **B** — на нём все тайлы портрета уникальны. Это ограничило количество доступных цветов, поэтому пришлось адаптировать свой портрет под палитру слоя **B**, сократив число оттенков до 13.
 
-![HS13cPortrait](images/HS13cPortrait.png)
+<picture>
+  <source srcset="./images/HS13cPortrait.png">
+  <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Behind%20the%20Code/Ultimate%20Mortal%20kombat%203%20SMD/images/HS13cPortrait.png" alt="HS13cPortrait">
+</picture>
 
 Затем я применил собственный конвертер, который принимает изображение и палитру и формирует два бинарных файла — **TileSet** и **TileMap** в формате Sega. После этого данные нужно было зашифровать и вставить в ROM. Однако с первой попытки у меня ничего не вышло, получившийся блок занимал больше места, чем оригинал. Оставалось два пути: вставить данные в конец РОМа, но тогда это увеличит его размер, либо найти место в роме, которое не используется(если оно есть) и вставить туда.
 К счастью, такое место действительно существовало: благодаря тому же форуму удалось узнать, что по адресу `3EE47A` хранятся неиспользуемые портреты из оригинального **Mortal Kombat 3**, включая даже **Shiva**. До сих пор неизвестно, почему разработчики их оставили, но нам это на руку.
 После конвертации и вставки данных изображение появилось, но с искажениями:
 
-![NoobCorrupt](images/NoobCorrupt.gif)
+<picture>
+  <source srcset="./images/NoobCorrupt.gif">
+  <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Behind%20the%20Code/Ultimate%20Mortal%20kombat%203%20SMD/images/NoobCorrupt.gif" alt="NoobCorrupt">
+</picture>
 
 Я начал разбираться в ситуации и выяснил, что расшифрованные данные карты занимают в два раза больше места, чем у меня.
 
-![tilemap data](images/tilemap_data.png)
+<picture>
+  <source srcset="./images/tilemap_data.png">
+  <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Behind%20the%20Code/Ultimate%20Mortal%20kombat%203%20SMD/images/tilemap_data.png" alt="tilemap_data">
+</picture>
 
 Я думал, что программа некорректно дешифрует тайловые карты, и решил провести проверку. Дешифровал карту, изменил значение первого элемента в **TileMap** на +1, зашифровал и загрузил в РОМ. В результате первый тайл на слое **А** изменился.
 
-![tilemapCheck](images/tilemapCheck.png)
+<picture>
+  <source srcset="./images/tilemapCheck.png">
+  <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Behind%20the%20Code/Ultimate%20Mortal%20kombat%203%20SMD/images/tilemapCheck.png" alt="tilemapCheck">
+</picture>
 
 Позже выяснилось, что менять карту вовсе не обязательно, ведь на слое **B** все тайлы уникальны. Нужно было лишь найти в **TileSet** область, относящуюся к слою **A**, обнулить её и вставить свои тайлы в позицию слоя **B**. Эти блоки располагались в середине и конце набора, поэтому вставку пришлось выполнить дважды.
 После нескольких попыток всё заработало:
 
 * Первая не удалась из-за ошибок в конвертере при работе с палитрой.
 
-![first try](images/first_try.png)
+<picture>
+  <source srcset="./images/first_try.png">
+  <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Behind%20the%20Code/Ultimate%20Mortal%20kombat%203%20SMD/images/first_try.png" alt="first_try">
+</picture>
 
 * Вторая дала частичный результат.
 
-![second try](images/second_try.png)
+<picture>
+  <source srcset="./images/second_try.png">
+  <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Behind%20the%20Code/Ultimate%20Mortal%20kombat%203%20SMD/images/second_try.png" alt="second_try">
+</picture>
 
 * Третья выявила проблему — два чёрных цвета в палитре воспринимались как один, из-за чего смещались индексы.
 
-![third try](images/third_try.png)
+<picture>
+  <source srcset="./images/third_try.png">
+  <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Behind%20the%20Code/Ultimate%20Mortal%20kombat%203%20SMD/images/third_try.png" alt="third_try">
+</picture>
 
 Исправив это, с четвёртой попытки удалось добиться идеального результата, и портрет теперь корректно отображается на экране выбора.
 
-![fourth try](images/fourth_try.png)
+<picture>
+  <source srcset="./images/fourth_try.png">
+  <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Behind%20the%20Code/Ultimate%20Mortal%20kombat%203%20SMD/images/fourth_try.png" alt="fourth_try">
+</picture>
 
 Также всё корректно отображается на экране VS, и в самой игре всё прекрасно работает.
 
-![vs screen](images/vs_screen.png)
+<picture>
+  <source srcset="./images/vs_screen.png">
+  <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Behind%20the%20Code/Ultimate%20Mortal%20kombat%203%20SMD/images/vs_screen.png" alt="vs_screen">
+</picture>
 
-![game screen](images/game_screen.png)
+<picture>
+  <source srcset="./images/game_screen.png">
+  <img src="https://raw.githubusercontent.com/Mark65537/My-articles-and-reviews/refs/heads/main/Finished/Behind%20the%20Code/Ultimate%20Mortal%20kombat%203%20SMD/images/game_screen.png" alt="game_screen">
+</picture>
 
 ## Заключение
 
