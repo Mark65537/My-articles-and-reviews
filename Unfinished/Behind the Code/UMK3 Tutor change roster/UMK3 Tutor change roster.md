@@ -26,7 +26,7 @@
 
 ## 2. Изменение портретов
 
-First of all you need change Sequence of characters else portraits will not match. [[1]] If you want to swap the portraits that are already on the character selection screen, you only need to replace the references to the TileSet and TileMap used by the portraits.
+First of all you need change Sequence of characters else portraits will not match. If you want to swap the portraits that are already on the character selection screen, you only need to replace the references to the TileSet and TileMap и количество тайлов используемые в заголовке.
 
 ### Базовый алгоритм
 
